@@ -1,0 +1,264 @@
+{
+  "SourceVersion": 13,
+  "TargetVersion": 12,
+  "Rules": [
+    {
+      "Id": "string_split",
+      "Pattern": "STRING_SPLIT(",
+      "Description": "STRING_SPLIT(string, delimiter) không có trong SQL 2014 — thay bằng hàm TVF fn_SplitString",
+      "Action": "inject_function",
+      "FunctionName": "fn_SplitString",
+      "FunctionDefinition": "CREATE FUNCTION [dbo].[fn_SplitString](@input NVARCHAR(MAX), @delimiter NCHAR(1)) RETURNS @result TABLE(value NVARCHAR(MAX)) AS BEGIN DECLARE @pos INT = 1, @len INT = LEN(@input); WHILE @pos <= @len BEGIN DECLARE @end INT = CHARINDEX(@delimiter, @input, @pos); IF @end = 0 SET @end = @len + 1; INSERT INTO @result(value) VALUES(SUBSTRING(@input, @pos, @end - @pos)); SET @pos = @end + 1; END; RETURN; END",
+      "SearchRegex": "STRING_SPLIT\\s*\\(([^,]+),\\s*'([^']*)'\\)",
+      "ReplaceFormat": "dbo.fn_SplitString($1, '$2')",
+      "Enabled": true
+    },
+    {
+      "Id": "string_escape_json",
+      "Pattern": "STRING_ESCAPE(",
+      "Description": "STRING_ESCAPE(text, 'json') không có trong SQL 2014 — thay bằng chuỗi REPLACE",
+      "Action": "regex_replace",
+      "SearchRegex": "STRING_ESCAPE\\s*\\((.+?),\\s*'json'\\)",
+      "ReplaceFormat": "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE($1, N'\\\\', N'\\\\\\\\'), N'\"', N'\\\\\"'), N'/', N'\\\\/'), NCHAR(8), N'\\\\b'), NCHAR(10), N'\\\\n'), NCHAR(13), N'\\\\r'), NCHAR(9), N'\\\\t'), N'\\u0000', N'\\\\u0000'), N'\\u0001', N'\\\\u0001'), N'\\u001f', N'\\\\u001f')",
+      "Enabled": true
+    },
+    {
+      "Id": "drop_table_if_exists",
+      "Pattern": "DROP TABLE",
+      "Description": "DROP TABLE IF EXISTS không hỗ trợ trên SQL 2014 — thay bằng IF OBJECT_ID ... DROP TABLE",
+      "Action": "regex_replace",
+      "SearchRegex": "DROP\\s+TABLE\\s+IF\\s+EXISTS\\s+(\\[[^\\]]*\\](?:\\.\\[[^\\]]*\\])|[^\\s;]+)",
+      "ReplaceFormat": "IF OBJECT_ID($1) IS NOT NULL DROP TABLE $1",
+      "Enabled": true
+    },
+    {
+      "Id": "drop_view_if_exists",
+      "Pattern": "DROP VIEW",
+      "Description": "DROP VIEW IF EXISTS không hỗ trợ trên SQL 2014 — thay bằng IF OBJECT_ID ... DROP VIEW",
+      "Action": "regex_replace",
+      "SearchRegex": "DROP\\s+VIEW\\s+IF\\s+EXISTS\\s+(\\[[^\\]]*\\](?:\\.\\[[^\\]]*\\])|[^\\s;]+)",
+      "ReplaceFormat": "IF OBJECT_ID($1) IS NOT NULL DROP VIEW $1",
+      "Enabled": true
+    },
+    {
+      "Id": "drop_proc_if_exists",
+      "Pattern": "DROP PROCEDURE",
+      "Description": "DROP PROCEDURE IF EXISTS không hỗ trợ trên SQL 2014 — thay bằng IF OBJECT_ID ... DROP PROCEDURE",
+      "Action": "regex_replace",
+      "SearchRegex": "DROP\\s+(?:PROC|PROCEDURE)\\s+IF\\s+EXISTS\\s+(\\[[^\\]]*\\](?:\\.\\[[^\\]]*\\])|[^\\s;]+)",
+      "ReplaceFormat": "IF OBJECT_ID($1) IS NOT NULL DROP PROCEDURE $1",
+      "Enabled": true
+    },
+    {
+      "Id": "drop_function_if_exists",
+      "Pattern": "DROP FUNCTION",
+      "Description": "DROP FUNCTION IF EXISTS không hỗ trợ trên SQL 2014 — thay bằng IF OBJECT_ID ... DROP FUNCTION",
+      "Action": "regex_replace",
+      "SearchRegex": "DROP\\s+FUNCTION\\s+IF\\s+EXISTS\\s+(\\[[^\\]]*\\](?:\\.\\[[^\\]]*\\])|[^\\s;]+)",
+      "ReplaceFormat": "IF OBJECT_ID($1) IS NOT NULL DROP FUNCTION $1",
+      "Enabled": true
+    },
+    {
+      "Id": "drop_trigger_if_exists",
+      "Pattern": "DROP TRIGGER",
+      "Description": "DROP TRIGGER IF EXISTS không hỗ trợ trên SQL 2014 — thay bằng IF OBJECT_ID ... DROP TRIGGER",
+      "Action": "regex_replace",
+      "SearchRegex": "DROP\\s+TRIGGER\\s+IF\\s+EXISTS\\s+(\\[[^\\]]*\\](?:\\.\\[[^\\]]*\\])|[^\\s;]+)",
+      "ReplaceFormat": "IF OBJECT_ID($1) IS NOT NULL DROP TRIGGER $1",
+      "Enabled": true
+    },
+    {
+      "Id": "create_or_alter",
+      "Pattern": "CREATE OR ALTER",
+      "Description": "CREATE OR ALTER không có trong SQL 2014 — thay bằng IF OBJECT_ID ... DROP + GO + CREATE",
+      "Action": "regex_replace",
+      "SearchRegex": "CREATE\\s+OR\\s+ALTER\\s+(PROC(?:EDURE)?|VIEW|FUNCTION|TRIGGER)\\s+(\\[[^\\]]*\\](?:\\.\\[[^\\]]*\\])|[^\\s\\(;]+)",
+      "ReplaceFormat": "IF OBJECT_ID(N'$2') IS NOT NULL DROP $1 $2\nGO\nCREATE $1 $2",
+      "Enabled": true
+    },
+    {
+      "Id": "datediff_big",
+      "Pattern": "DATEDIFF_BIG(",
+      "Description": "DATEDIFF_BIG không có trong SQL 2014 — thay bằng hàm tương thích Compat.DatediffBig",
+      "Action": "regex_replace",
+      "SearchRegex": "DATEDIFF_BIG\\s*\\(\\s*([^,()]+?)\\s*,\\s*([^,()]+?)\\s*,\\s*([^()]+?)\\s*\\)",
+      "ReplaceFormat": "Compat.DatediffBig($1, $2, $3)",
+      "RequiresShim": "Date",
+      "Enabled": true
+    },
+    {
+      "Id": "compress",
+      "Pattern": "COMPRESS(",
+      "Description": "COMPRESS (GZip) không có trong SQL 2014 — không thể rewrite bằng T-SQL thuần",
+      "Action": "not_supported",
+      "Message": "COMPRESS() dùng GZip, SQL Server 2014 không có. Lựa chọn: CLR dùng System.IO.Compression (cần mở CLR + ký assembly), hoặc chuyển nén/giải nén lên tầng ứng dụng.",
+      "Enabled": true
+    },
+    {
+      "Id": "decompress",
+      "Pattern": "DECOMPRESS(",
+      "Description": "DECOMPRESS (GZip) không có trong SQL 2014 — không thể rewrite bằng T-SQL thuần",
+      "Action": "not_supported",
+      "Message": "DECOMPRESS() dùng GZip, SQL Server 2014 không có. Lựa chọn: CLR dùng System.IO.Compression, hoặc chuyển lên tầng ứng dụng. Lưu ý dữ liệu đã nén bằng 2016 vẫn giải được bằng GZip chuẩn.",
+      "Enabled": true
+    },
+    {
+      "Id": "sp_set_session_context",
+      "Pattern": "sp_set_session_context",
+      "Description": "sp_set_session_context không có trong SQL 2014 — thay bằng proc tương thích theo session",
+      "Action": "regex_replace",
+      "SearchRegex": "sp_set_session_context\\s+@key\\s*=\\s*([^,]+?)\\s*,\\s*@value\\s*=\\s*([^,;]+?)(\\s*,\\s*@read_only\\s*=\\s*[^;]+)?",
+      "ReplaceFormat": "Compat.SessionContext_Set @key = $1, @value = $2",
+      "RequiresShim": "Session",
+      "Warning": "Cờ @read_only của sp_set_session_context gốc bị bỏ qua (shim luôn cho ghi đè).",
+      "Enabled": true
+    },
+    {
+      "Id": "truncate_with_partitions",
+      "Pattern": "WITH (PARTITIONS",
+      "Description": "TRUNCATE TABLE ... WITH (PARTITIONS ...) không có trong SQL 2014 — chỉ truncate được cả bảng",
+      "Action": "not_supported",
+      "Message": "TRUNCATE theo partition chỉ có từ SQL Server 2016. Trên 2014: dùng partition SWITCH chuyển partition ra bảng staging rồi TRUNCATE staging, hoặc DELETE theo điều kiện partition.",
+      "Enabled": true
+    },
+    {
+      "Id": "openjson",
+      "Pattern": "OPENJSON(",
+      "Description": "OPENJSON lược đồ mặc định không có trong SQL 2014 — thay bằng hàm tương thích Compat.OpenJson",
+      "Action": "regex_replace",
+      "SearchRegex": "OPENJSON\\s*\\(\\s*([^()]+?)\\s*\\)(?!\\s*WITH\\b)",
+      "ReplaceFormat": "Compat.OpenJson($1)",
+      "RequiresShim": "Json",
+      "Enabled": true
+    },
+    {
+      "Id": "openjson_with",
+      "Pattern": "OPENJSON(",
+      "Description": "OPENJSON ... WITH (danh sách cột) không rewrite tự động được",
+      "Action": "not_supported",
+      "SearchRegex": "OPENJSON\\s*\\([^()]*\\)\\s*WITH\\b",
+      "Message": "OPENJSON dạng WITH (khai báo cột) không có trong SQL Server 2014 và hình dạng dòng phụ thuộc cột khai báo. Hãy viết lại bằng Compat.OpenJson(@json) (dạng mặc định key/value/type) rồi CROSS APPLY Compat.JsonValue(value, '$.cot') cho từng cột.",
+      "Enabled": true
+    },
+    {
+      "Id": "json_value",
+      "Pattern": "JSON_VALUE(",
+      "Description": "JSON_VALUE không có trong SQL 2014 — thay bằng hàm tương thích Compat.JsonValue",
+      "Action": "regex_replace",
+      "SearchRegex": "JSON_VALUE\\s*\\(\\s*([^,()]+?)\\s*,\\s*([^()]+?)\\s*\\)",
+      "ReplaceFormat": "Compat.JsonValue($1, $2)",
+      "RequiresShim": "Json",
+      "Enabled": true
+    },
+    {
+      "Id": "json_query",
+      "Pattern": "JSON_QUERY(",
+      "Description": "JSON_QUERY không có trong SQL 2014 — thay bằng hàm tương thích Compat.JsonQuery",
+      "Action": "regex_replace",
+      "SearchRegex": "JSON_QUERY\\s*\\(\\s*([^,()]+?)\\s*,\\s*([^()]+?)\\s*\\)",
+      "ReplaceFormat": "Compat.JsonQuery($1, $2)",
+      "RequiresShim": "Json",
+      "Enabled": true
+    },
+    {
+      "Id": "json_modify",
+      "Pattern": "JSON_MODIFY(",
+      "Description": "JSON_MODIFY không có trong SQL 2014 — không thể rewrite tự động",
+      "Action": "not_supported",
+      "Message": "JSON_MODIFY() không có trong SQL Server 2014. Ghi/chỉnh JSON phải chuyển lên tầng ứng dụng.",
+      "Enabled": true
+    },
+    {
+      "Id": "for_json",
+      "Pattern": "FOR JSON",
+      "Description": "FOR JSON AUTO/PATH không có trong SQL 2014 — không thể rewrite tự động",
+      "Action": "not_supported",
+      "Message": "FOR JSON không có trong SQL Server 2014. Cần dùng FOR XML hoặc app-level serialization.",
+      "Enabled": true
+    },
+    {
+      "Id": "isjson",
+      "Pattern": "ISJSON(",
+      "Description": "ISJSON không có trong SQL 2014 — thay bằng hàm tương thích Compat.IsJson",
+      "Action": "regex_replace",
+      "SearchRegex": "ISJSON\\s*\\(\\s*([^()]+?)\\s*\\)",
+      "ReplaceFormat": "Compat.IsJson($1)",
+      "RequiresShim": "Json",
+      "Enabled": true
+    },
+    {
+      "Id": "session_context",
+      "Pattern": "SESSION_CONTEXT(",
+      "Description": "SESSION_CONTEXT không có trong SQL 2014 — thay bằng hàm tương thích theo session",
+      "Action": "regex_replace",
+      "SearchRegex": "SESSION_CONTEXT\\s*\\(\\s*([^)]+?)\\s*\\)",
+      "ReplaceFormat": "Compat.SessionContext_Get($1)",
+      "RequiresShim": "Session",
+      "Enabled": true
+    },
+    {
+      "Id": "at_time_zone_convert",
+      "Pattern": "AT TIME ZONE",
+      "Description": "AT TIME ZONE 2 nấc không có trong SQL 2014 — thay bằng hàm chuyển múi giờ tương thích",
+      "Action": "regex_replace",
+      "SearchRegex": "((?:[\\w@#]+\\s*\\.\\s*)*[\\w@#]+|\\([^()]*\\)|\\[[^\\]]+\\](?:\\s*\\.\\s*\\[[^\\]]+\\])*)\\s+AT\\s+TIME\\s+ZONE\\s+'([^']+)'\\s+AT\\s+TIME\\s+ZONE\\s+'([^']+)'",
+      "ReplaceFormat": "Compat.ConvertTimeZone($1, '$2', '$3')",
+      "RequiresShim": "TimeZone",
+      "Warning": "Chuyển múi giờ dùng offset giờ chuẩn; vùng có DST (giờ mùa hè) có thể lệch trong mùa DST.",
+      "Enabled": true
+    },
+    {
+      "Id": "at_time_zone",
+      "Pattern": "AT TIME ZONE",
+      "Description": "AT TIME ZONE không có trong SQL 2014 — thay bằng hàm chuyển múi giờ tương thích",
+      "Action": "regex_replace",
+      "SearchRegex": "((?:[\\w@#]+\\s*\\.\\s*)*[\\w@#]+|\\([^()]*\\)|\\[[^\\]]+\\](?:\\s*\\.\\s*\\[[^\\]]+\\])*)\\s+AT\\s+TIME\\s+ZONE\\s+'([^']+)'",
+      "ReplaceFormat": "Compat.ConvertTimeZone($1, '$2', NULL)",
+      "RequiresShim": "TimeZone",
+      "Warning": "Chuyển múi giờ dùng offset giờ chuẩn; vùng có DST (giờ mùa hè) có thể lệch trong mùa DST.",
+      "Enabled": true
+    },
+    {
+      "Id": "temporal_table",
+      "Pattern": "SYSTEM_VERSIONING",
+      "Description": "Temporal Tables không có trong SQL 2014 — cần kiến trúc hoàn toàn khác",
+      "Action": "not_supported",
+      "Message": "Temporal Tables (SYSTEM_VERSIONING) không có trong SQL Server 2014. Cần tạo bảng lịch sử thủ công + trigger.",
+      "Enabled": true
+    },
+    {
+      "Id": "row_level_security",
+      "Pattern": "CREATE SECURITY POLICY",
+      "Description": "Row-Level Security không có trong SQL 2014 — cần chuyển sang app-level",
+      "Action": "not_supported",
+      "Message": "Row-Level Security không có trong SQL Server 2014. Cần chuyển sang app-level security.",
+      "Enabled": true
+    },
+    {
+      "Id": "always_encrypted",
+      "Pattern": "ENCRYPTED WITH",
+      "Description": "Always Encrypted không có trong SQL 2014 — cần chuyển sang app-level encryption",
+      "Action": "not_supported",
+      "Message": "Always Encrypted không có trong SQL Server 2014. Cần chuyển sang app-level encryption.",
+      "Enabled": true
+    },
+    {
+      "Id": "dynamic_data_masking",
+      "Pattern": "MASKED WITH",
+      "Description": "Dynamic Data Masking không có trong SQL 2014 — tự lột mệnh đề MASKED khi tạo bảng",
+      "Action": "regex_replace",
+      "SearchRegex": "MASKED\\s+WITH\\s*\\(\\s*FUNCTION\\s*=\\s*'[^']*'\\s*\\)",
+      "ReplaceFormat": "",
+      "Warning": "Cột này trên nguồn có che dữ liệu (masking) nhưng đích 2014 không hỗ trợ nên app đã tạo cột KHÔNG che — dữ liệu nhạy cảm sẽ hiện nguyên văn. Hãy tạo view che tay nếu cần.",
+      "Enabled": true
+    },
+    {
+      "Id": "for_system_time",
+      "Pattern": "FOR SYSTEM_TIME",
+      "Description": "Truy vấn temporal FOR SYSTEM_TIME không có trong SQL 2014",
+      "Action": "not_supported",
+      "Message": "FOR SYSTEM_TIME chỉ có từ SQL Server 2016. Sau khi app chuyển bảng temporal sang bảng lịch sử + trigger, truy vấn này cần trỏ sang bảng lịch sử — app sẽ tự rewrite các dạng AS OF và ALL.",
+      "Enabled": true
+    }
+  ]
+}

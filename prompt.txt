@@ -1,0 +1,78 @@
+You are tasked with designing and implementing a robust database migration and conversion tool for Microsoft SQL Server. The tool must be able to copy the entire schema and all data from a source SQL Server database to a destination SQL Server database, with support for migrating between different versions (upgrade/downgrade). The tool should provide options to enable/disable data checking (CHECK constraints) and foreign key enforcement during the data copy process to improve performance and handle dependencies.
+
+### Requirements:
+
+#### Functional Requirements:
+1. **Schema Copy**:
+   - Copy all database objects: tables, views, stored procedures, user-defined functions, triggers, indexes, primary keys, foreign keys, unique constraints, check constraints, default constraints, sequences, user-defined data types, schemas, and permissions (if applicable).
+   - Preserve object definitions exactly as in the source, including collation, identity properties, computed columns, and default values.
+   - Handle object dependencies (e.g., create tables before views, create primary keys before foreign keys).
+   - Support copying schema only, data only, or both.
+
+2. **Data Copy**:
+   - Copy all rows from every table.
+   - Preserve identity values (optional: allow reseeding after copy).
+   - Use efficient bulk copy methods (e.g., `SqlBulkCopy` in .NET) for performance.
+   - Support large tables and large databases with configurable batch size.
+   - Handle data type conversions when migrating between different SQL Server versions (e.g., from `datetime` to `datetime2`).
+
+3. **Constraints Management**:
+   - Provide options to disable all CHECK constraints and foreign keys on the destination before loading data.
+   - After data load, re-enable the constraints and optionally check existing data (`WITH CHECK` vs `WITH NOCHECK`).
+   - Allow the user to choose whether to enforce constraints during data copy or defer them.
+
+4. **Version Compatibility**:
+   - Support migrating between different SQL Server versions (e.g., 2012 to 2019, 2019 to 2017). The tool must detect incompatible features and either convert them or warn the user.
+   - Handle deprecated or removed features gracefully.
+
+5. **Command-Line Interface (CLI)**:
+   - Provide a CLI with parameters for:
+     - Source connection string.
+     - Destination connection string.
+     - Mode: `schema_only`, `data_only`, `full` (default: `full`).
+     - Disable constraints: `--disable-fk`, `--disable-check` (default: true for performance).
+     - Preserve identity: `--preserve-identity` (default: false).
+     - Batch size: `--batch-size` (default: 5000).
+     - Log file path: `--log-file`.
+   - Example usage: `migrator --source "Server=.;Database=SourceDB;Trusted_Connection=True;" --destination "Server=.;Database=DestDB;Trusted_Connection=True;" --mode full --disable-fk --disable-check --preserve-identity`
+
+6. **Logging and Error Handling**:
+   - Log all operations (info, warnings, errors) to console and optionally to a log file.
+   - On error, rollback the current transaction (if possible) and report which object failed.
+   - Continue on non-critical errors (e.g., skip unsupported objects with a warning) if configured.
+
+7. **Testing**:
+   - Include unit tests for core components (schema extraction, data copy, constraint toggling).
+   - Provide a sample script to set up test databases.
+
+#### Technical Requirements:
+- **Language**: C# (.NET 8 or later) using `Microsoft.SqlServer.Management.Smo` (or `Microsoft.SqlServer.Dac` if better) for schema scripting and `Microsoft.Data.SqlClient` for data operations.
+- **Architecture**:
+  - Separate modules: SchemaExtractor, SchemaBuilder, DataCopier, ConstraintManager, Logger.
+  - Use dependency injection for testability.
+  - Follow SOLID principles.
+- **Performance**:
+  - Use `SqlBulkCopy` with `TableLock` option and optional `UseInternalTransaction` for batch atomicity.
+  - Disable indexes on destination before data load and rebuild after (optional but recommended).
+- **Security**: Use parameterized queries to avoid injection; never concatenate object names directly; use proper quoting (e.g., `QUOTENAME`).
+
+#### Deliverables:
+- Complete source code with project structure.
+- README with usage instructions.
+- Unit tests (xUnit or NUnit).
+- A PowerShell script to build and run the tool.
+
+#### Edge Cases to Handle:
+- Tables with no primary key.
+- Tables with circular foreign key dependencies (need to temporarily disable FK).
+- Computed columns and columns with default values (must exclude from insert).
+- Identity columns (must use `SET IDENTITY_INSERT ON` when preserving identity).
+- Large objects (BLOB, TEXT) – may require special handling.
+- Database with multiple schemas.
+- SQL Server features not available in destination version (e.g., memory-optimized tables, columnstore indexes, temporal tables) – warn and skip or convert.
+
+#### Additional Notes:
+- The tool must be cross-platform (Windows, Linux, macOS) if using .NET Core.
+- Provide a way to exclude certain tables or objects (optional but nice to have).
+
+Please generate the full implementation based on these requirements.

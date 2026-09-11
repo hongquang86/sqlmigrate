@@ -1,0 +1,12 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+
+# File build ra (tái tạo được, không đưa lên git — giữ lại .iss nguồn)
+App/Publish/
+App/Installer/*.exe
+*.zip
+*.msi
