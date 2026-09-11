@@ -37,7 +37,10 @@ jobs:
           "number=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Publish WinForms (win-x64)
-        run: dotnet publish src/SqlMigrator.UI.WinForms/SqlMigrator.UI.WinForms.csproj -c Release -r win-x64 --self-contained false -o App/Publish --nologo
+        # Truyền Version từ tag vào binary (VD: tag v1.2.0 -> assembly 1.2.0.0).
+        # Nếu không truyền, app đóng gói vẫn mang Version ghi cứng trong csproj
+        # và updater sẽ "cập nhật xong mà version không đổi".
+        run: dotnet publish src/SqlMigrator.UI.WinForms/SqlMigrator.UI.WinForms.csproj -c Release -r win-x64 --self-contained false -o App/Publish --nologo -p:Version=${{ steps.ver.outputs.number }}
 
       - name: Cài Inno Setup
         run: choco install innosetup --no-progress -y
