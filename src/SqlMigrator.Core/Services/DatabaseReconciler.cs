@@ -329,7 +329,7 @@ namespace SqlMigrator.Core.Services
             {
                 issue.Status = ReconcileIssueStatus.Failed;
                 issue.ErrorMessage = (issue.ErrorMessage ?? "Thiếu dependency.")
-                    + " Vẫn thiếu object phụ thuộc sau nhiều vòng thử — cần tạo object phụ thuộc trước, rồi tạo lại object này.";
+                    + DescribeMissingDependency(issue.ErrorMessage);
                 failedList.Add(issue);
                 _logger.LogError("Xử lý {Name} thất bại: vẫn thiếu dependency sau retry.",
                     issue.ObjectName);
@@ -672,6 +672,24 @@ namespace SqlMigrator.Core.Services
                     var sqlError = ExtractSqlErrorMessage(ex);
                     issue.ErrorMessage = sqlError ?? ex.Message;
 
+                    // Lỗi 209 (cột mơ hồ, thường do SELECT * lỗi thời): thử bung
+                    // tường minh trước; thành công thì xong issue này ngay.
+                    if (IsAmbiguousColumnError(ex))
+                    {
+                        var starFixed = await TryFixAmbiguousColumnsAsync(
+                            destConn, issue, issue.SourceScript!, ct).ConfigureAwait(false);
+                        if (starFixed)
+                        {
+                            issue.CreateSucceeded = true;
+                            issue.Status = ReconcileIssueStatus.Fixed;
+                            issue.SuggestedAction = "Đã bung SELECT * tường minh và tạo thành công trên đích."
+                                + (issue.Warnings.Count > 0
+                                    ? " Lưu ý: " + string.Join(" ", issue.Warnings)
+                                    : "");
+                            continue;
+                        }
+                    }
+
                     // Bước 3: Nếu lỗi và có rewrite engine, thử rewrite.
                     if (_rewriteEngine != null && !string.IsNullOrEmpty(issue.SourceScript))
                     {
@@ -787,6 +805,10 @@ namespace SqlMigrator.Core.Services
                 var missingDeps = new List<string>();
                 foreach (var tableRef in tableRefs)
                 {
+                    // Bỏ tự tham chiếu chính mình (tên view/SP/FN xuất hiện ngay
+                    // trong dòng CREATE của nó) — trước đây sinh cảnh báo vòng vo.
+                    if (tableRef.Equals(issue.ObjectName, StringComparison.OrdinalIgnoreCase))
+                        continue;
                     if (!HasKey(dest, "TABLE:" + tableRef))
                         missingDeps.Add(tableRef);
                 }
@@ -971,7 +993,17 @@ namespace SqlMigrator.Core.Services
                 _options.CommandTimeoutSeconds, ct);
             // Script fix có thể gọi hàm Compat → đảm bảo shim đã có trên đích.
             await EnsureCompatShimsAsync(issue.RequiredShims, ct).ConfigureAwait(false);
-            await TryCreateOnDestAsync(conn, script, ct).ConfigureAwait(false);
+            try
+            {
+                await TryCreateOnDestAsync(conn, script, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsAmbiguousColumnError(ex))
+            {
+                // Lỗi 209 (cột mơ hồ, thường do SELECT * lỗi thời): thử bung tường minh.
+                // Không bung được thì ném lại lỗi gốc để vòng ngoài ghi nhận thất bại.
+                if (!await TryFixAmbiguousColumnsAsync(conn, issue, script, ct).ConfigureAwait(false))
+                    throw;
+            }
 
             // Bảng có cột masking: tạo thêm view che thay thế (ghi đích, không chạm nguồn).
             // View lỗi thì chỉ cảnh báo — bảng gốc vẫn tính là đã fix.
@@ -979,6 +1011,106 @@ namespace SqlMigrator.Core.Services
                 await TryCreateMaskedViewAsync(conn, issue, script, ct).ConfigureAwait(false);
 
             return true;
+        }
+
+        /// <summary>Nhận biết lỗi cột mơ hồ (SQL 209 Ambiguous column name).</summary>
+        internal static bool IsAmbiguousColumnError(Exception ex)
+        {
+            if (ex is SqlException sqlEx)
+            {
+                foreach (SqlError err in sqlEx.Errors)
+                {
+                    if (err.Number == 209)
+                        return true;
+                }
+            }
+
+            var message = ex.Message ?? string.Empty;
+            return message.Contains("Ambiguous column", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Thử sửa lỗi 209 cho view/function: bung SELECT * thành danh sách cột
+        /// tường minh đọc từ catalog NGUỒN (chỉ SELECT), rồi tạo lại trên đích.
+        /// Trả true nếu tạo thành công; false (không ném) trong mọi trường hợp còn lại.
+        /// </summary>
+        private async Task<bool> TryFixAmbiguousColumnsAsync(
+            SqlConnection destConn, ReconcileIssue issue, string script, CancellationToken ct)
+        {
+            try
+            {
+                if (!issue.ObjectType.Equals("VIEW", StringComparison.OrdinalIgnoreCase)
+                    && !issue.ObjectType.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase)
+                    && !issue.ObjectType.Equals("STORED_PROCEDURE", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                if (string.IsNullOrWhiteSpace(script) || script.IndexOf('*') < 0)
+                    return false;
+
+                var aliases = StarExpander.ParseTableAliases(script);
+                if (aliases.Count == 0)
+                    return false;
+
+                using var sourceConn = SqlConnectionFactory.Open(_options.SourceConnectionString,
+                    _options.CommandTimeoutSeconds, ct);
+                var aliasColumns = new List<(string Alias, IReadOnlyList<string> Columns)>();
+                foreach (var (alias, table) in aliases)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var cols = await ReadTableColumnsAsync(sourceConn, table, ct).ConfigureAwait(false);
+                    if (cols.Count > 0)
+                        aliasColumns.Add((alias, cols));
+                }
+                if (aliasColumns.Count == 0)
+                    return false;
+
+                var (changed, expanded) = StarExpander.ExpandStars(script, aliasColumns);
+                if (!changed)
+                    return false;
+
+                await TryCreateOnDestAsync(destConn, expanded, ct).ConfigureAwait(false);
+
+                issue.RewrittenScript = expanded;
+                var applied = issue.AppliedRules.ToList();
+                if (!applied.Contains("star_expand"))
+                    applied.Add("star_expand");
+                issue.AppliedRules = applied;
+                AddIssueWarning(issue,
+                    "Script gốc dùng SELECT * lỗi thời gây mơ hồ cột — app đã bung tường minh "
+                    + "theo đúng cột của bảng nguồn.");
+                _logger.LogInformation("✔ '{Name}' tạo thành công sau khi bung SELECT *.",
+                    issue.ObjectName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Không bung được SELECT * cho '{Name}' ({Message}).",
+                    issue.ObjectName, ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Đọc tên cột của bảng/view theo thứ tự column_id (chỉ SELECT nguồn).</summary>
+        private static async Task<IReadOnlyList<string>> ReadTableColumnsAsync(
+            SqlConnection sourceConn, string tableName, CancellationToken ct)
+        {
+            var dot = tableName.LastIndexOf('.');
+            var schema = dot > 0 ? tableName.Substring(0, dot) : "dbo";
+            var name = dot > 0 ? tableName.Substring(dot + 1) : tableName;
+
+            var cols = new List<string>();
+            using var cmd = new SqlCommand(
+                "SELECT c.name FROM sys.columns c "
+                + "JOIN sys.objects o ON o.object_id = c.object_id "
+                + "JOIN sys.schemas s ON s.schema_id = o.schema_id "
+                + "WHERE s.name = @schema AND o.name = @name AND o.type IN ('U','V') "
+                + "ORDER BY c.column_id;", sourceConn)
+            { CommandTimeout = 120 };
+            cmd.Parameters.AddWithValue("@schema", schema);
+            cmd.Parameters.AddWithValue("@name", name);
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                cols.Add(reader.GetString(0));
+            return cols;
         }
 
         /// <summary>
@@ -1090,6 +1222,37 @@ namespace SqlMigrator.Core.Services
 
             var message = ex.Message ?? string.Empty;
             return message.Contains("Invalid object name", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Giải thích cụ thể object nào còn thiếu sau retry. Đặc biệt: tên 3 phần
+        /// (VD: ADEL9200.dbo.ROOMINFO) nghĩa là trỏ sang DATABASE KHÁC — app không
+        /// thể tự tạo, user phải di chuyển database đó trước (hoặc tạo bảng tương ứng).
+        /// </summary>
+        internal static string DescribeMissingDependency(string? errorMessage)
+        {
+            if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                var m = Regex.Match(errorMessage, @"Invalid object name '([^']+)'",
+                    RegexOptions.IgnoreCase);
+                if (m.Success)
+                {
+                    var missing = m.Groups[1].Value.Trim().Trim('[', ']');
+                    var parts = missing.Split('.');
+                    if (parts.Length >= 3)
+                    {
+                        var db = parts[0].Trim('[', ']');
+                        return " Đối tượng thiếu '" + missing + "' nằm ở DATABASE KHÁC (" + db + ") — "
+                            + "app chỉ di chuyển trong một database nên KHÔNG tự tạo được. "
+                            + "Hãy di chuyển database '" + db + "' trước (hoặc tạo bảng tương ứng trên đích), "
+                            + "rồi bấm Xử lý lại.";
+                    }
+                    return " Vẫn thiếu object '" + missing + "' sau nhiều vòng thử — "
+                        + "cần tạo object phụ thuộc trước, rồi tạo lại object này.";
+                }
+            }
+            return " Vẫn thiếu object phụ thuộc sau nhiều vòng thử — "
+                + "cần tạo object phụ thuộc trước, rồi tạo lại object này.";
         }
 
         /// <summary>
