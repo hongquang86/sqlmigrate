@@ -117,6 +117,31 @@ public class InventoryComparerTests
         Assert.Contains(lines, l => l.Contains("Không đọc được hồ sơ") && l.Contains("timeout"));
     }
 
+    [Fact]
+    public void FormatInventory_ListsObjectNames()
+    {
+        var inv = MakeInventory(new[] { "dbo.B", "dbo.A" }, new[] { "dbo.V1" }, new string[0]);
+        var lines = InventoryComparer.FormatInventory("— HỒ SƠ —", inv);
+
+        Assert.Contains(lines, l => l.Contains("Bảng (2):") && l.Contains("dbo.A") && l.Contains("dbo.B"));
+        Assert.Contains(lines, l => l.Contains("View (1):") && l.Contains("dbo.V1"));
+        // Nhóm trống (SP/function/...) không in để gọn log.
+        Assert.DoesNotContain(lines, l => l.Contains("Stored Procedure (0)"));
+    }
+
+    [Fact]
+    public void FormatNames_TruncatesLongLists()
+    {
+        var names = new List<string>();
+        for (var i = 0; i < 35; i++)
+            names.Add($"dbo.P{i:00}");
+
+        var lines = InventoryComparer.FormatNames("Stored Procedure", names, maxShown: 30);
+
+        Assert.Single(lines);
+        Assert.Contains("+5 nữa", lines[0]);
+    }
+
     [Theory]
     // sys.objects.type là char(2): "U "/"V "/"P " có dấu cách đuôi, FN/TR đủ 2 ký tự.
     [InlineData("U ", "TABLE:")]

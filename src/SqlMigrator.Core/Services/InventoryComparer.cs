@@ -89,6 +89,14 @@ namespace SqlMigrator.Core.Services
                 + $" | Trigger: {inv.Triggers.Count:N0}"
                 + $" | Sequence: {inv.Sequences.Count:N0}");
 
+            // Liệt kê tên từng đối tượng (nhóm trống thì bỏ qua cho gọn log).
+            lines.AddRange(FormatNames("Bảng", inv.Tables.Select(t => t.PlainName).ToList()));
+            lines.AddRange(FormatNames("View", inv.Views.Select(t => t.PlainName).ToList()));
+            lines.AddRange(FormatNames("Stored Procedure", inv.Procedures.Select(t => t.PlainName).ToList()));
+            lines.AddRange(FormatNames("Function", inv.Functions.Select(t => t.PlainName).ToList()));
+            lines.AddRange(FormatNames("Trigger", inv.Triggers.Select(t => t.PlainName).ToList()));
+            lines.AddRange(FormatNames("Sequence", inv.Sequences.ToList()));
+
             var features = new List<string>();
             if (inv.TemporalTables > 0) features.Add($"{inv.TemporalTables} bảng temporal");
             if (inv.MaskedColumns > 0) features.Add($"{inv.MaskedColumns} cột masking");
@@ -99,6 +107,26 @@ namespace SqlMigrator.Core.Services
                 ? "  Tính năng 2016+ đang dùng: " + string.Join(", ", features) + "."
                 : "  Không dùng tính năng đặc biệt 2016+ (thuận lợi khi hạ cấp).");
             return lines;
+        }
+
+        /// <summary>
+        /// Một dòng liệt kê tên đối tượng trong nhóm (tối đa 30 tên đầu + số còn lại).
+        /// Nhóm trống trả về rỗng để log gọn.
+        /// </summary>
+        internal static IReadOnlyList<string> FormatNames(
+            string label, IReadOnlyList<string> names, int maxShown = 30)
+        {
+            if (names == null || names.Count == 0)
+                return Array.Empty<string>();
+            var ordered = names
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var shown = ordered.Take(maxShown).ToList();
+            var line = $"  {label} ({ordered.Count:N0}): " + string.Join(", ", shown);
+            if (ordered.Count > maxShown)
+                line += $" ... +{ordered.Count - maxShown:N0} nữa";
+            return new List<string> { line };
         }
 
         /// <summary>Các dòng đối chiếu đích vs nguồn (dùng sau khi di chuyển xong).</summary>
