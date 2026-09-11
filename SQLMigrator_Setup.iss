@@ -1,5 +1,5 @@
 #define AppName "SQL Migrator"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppPublisher "HongQuang"
 #define AppExeName "SqlMigrator.exe"
 #define AppDirName "SQL Migrator"
@@ -22,16 +22,16 @@ LicenseFile=D:\Projects\AI-APP\MigrateSQL\LICENSE.txt
 InfoBeforeFile=D:\Projects\AI-APP\MigrateSQL\README.txt
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#AppExeName}
-AppUpdatesURL=https://github.com/anomalyco/opencode/issues
-AppSupportURL=https://github.com/anomalyco/opencode/issues
+AppUpdatesURL=https://github.com/hongquang86/sqlmigrate/releases
+AppSupportURL=https://github.com/hongquang86/sqlmigrate/issues
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "D:\Projects\AI-APP\MigrateSQL\App\Publish\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "D:\Projects\AI-APP\MigrateSQL\App\Publish\SqlMigrator.Core.pdb"; DestDir: "{app}"; Flags: ignoreversion; Permissions: users-modify
-Source: "D:\Projects\AI-APP\MigrateSQL\App\Publish\SqlMigrator.pdb"; DestDir: "{app}"; Flags: ignoreversion; Permissions: users-modify
+; Đóng gói TOÀN BỘ output publish (exe + Core.dll + rewrite-rules.json + phụ thuộc).
+; Trước đây chỉ đóng gói exe nên bản cài đặt thiếu file và crash khi chạy.
+Source: "D:\Projects\AI-APP\MigrateSQL\App\Publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"

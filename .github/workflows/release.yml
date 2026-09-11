@@ -1,0 +1,62 @@
+# Tự động build + tạo GitHub Release mỗi khi gắn tag v* (VD: v1.1.0).
+# Quy trình phát hành bản mới cho user (không chuyên cũng làm được):
+#   1. Tăng <Version> trong src/SqlMigrator.UI.WinForms/*.csproj
+#      và AppVersion trong SQLMigrator_Setup.iss cho khớp (VD: 1.2.0).
+#   2. Commit + push code lên nhánh master.
+#   3. Gắn tag và push tag:  git tag v1.2.0 ; git push origin v1.2.0
+#   4. Workflow này tự build, đóng gói và đăng release kèm 2 file:
+#      SQLMigrator_Setup_1.2.0.exe và SQLMigrator_ClickToRun.zip.
+#   5. User bấm "Kiểm tra cập nhật" trong app là nhận bản mới.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Lấy version từ tag (v1.2.0 -> 1.2.0)
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          "number=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Publish WinForms (win-x64)
+        run: dotnet publish src/SqlMigrator.UI.WinForms/SqlMigrator.UI.WinForms.csproj -c Release -r win-x64 --self-contained false -o App/Publish --nologo
+
+      - name: Cài Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" SQLMigrator_Setup.iss
+          Rename-Item "App\Installer\SQLMigrator_Setup_*.exe" ("SQLMigrator_Setup_" + "${{ steps.ver.outputs.number }}" + ".exe") -ErrorAction SilentlyContinue
+          Get-ChildItem App\Installer\
+
+      - name: Đóng gói portable zip
+        shell: pwsh
+        run: Compress-Archive -Path "App\Publish\*" -DestinationPath "App\SQLMigrator_ClickToRun.zip" -Force
+
+      - name: Tạo GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            App/Installer/SQLMigrator_Setup_*.exe
+            App/SQLMigrator_ClickToRun.zip
+          generate_release_notes: true

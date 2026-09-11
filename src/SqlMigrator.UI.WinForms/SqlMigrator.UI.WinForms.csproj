@@ -8,6 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SqlMigrator.UI</RootNamespace>
     <AssemblyName>SqlMigrator</AssemblyName>
+    <!-- Nguồn sự thật duy nhất cho phiên bản app (updater so sánh với release GitHub).
+         Khi phát hành bản mới: tăng số này + AppVersion trong SQLMigrator_Setup.iss. -->
+    <Version>1.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

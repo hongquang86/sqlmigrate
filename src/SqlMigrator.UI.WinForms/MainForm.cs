@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Drawing;
+using System.IO.Compression;
+using System.Reflection;
 using System.Windows.Forms;
 using SqlMigrator.Core.Models;
 using SqlMigrator.Core.Security;
@@ -78,6 +81,13 @@ namespace SqlMigrator.UI
         private readonly Button _btnCancel = new() { Text = "Hủy", Enabled = false };
         private readonly Button _btnExportLog = new() { Text = "Xuất nhật ký…" };
         private readonly Button _btnClearLog = new() { Text = "Xóa nhật ký" };
+        private readonly Button _btnCheckUpdate = new() { Text = "Kiểm tra cập nhật" };
+        private readonly Label _lblVersion = new()
+        {
+            Text = "",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(100, 100, 100)
+        };
         private readonly RichTextBox _txtLog = new();
         private readonly ProgressBar _progressBar = new() { Style = ProgressBarStyle.Continuous, Maximum = 100, Minimum = 0 };
         private readonly Label _lblStatus = new() { Text = "Sẵn sàng.", AutoSize = true };
@@ -191,7 +201,7 @@ namespace SqlMigrator.UI
             foreach (var button in new[]
             {
                 _btnUpdateNew, _btnUpdateFull, _btnPreflight, _btnVerify, _btnReconcile, _btnStart, _btnCancel,
-                _btnExportLog, _btnClearLog, _btnLoadTables, _btnSelectAll, _btnSelectNone,
+                _btnExportLog, _btnClearLog, _btnCheckUpdate, _btnLoadTables, _btnSelectAll, _btnSelectNone,
                 _btnLoadObjects, _btnObjectsSelectAll, _btnObjectsSelectNone
             })
             {
@@ -541,6 +551,7 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             header.Controls.Add(_btnCancel);
             header.Controls.Add(_btnExportLog);
             header.Controls.Add(_btnClearLog);
+            header.Controls.Add(_btnCheckUpdate);
 
             // Thanh tiến trình: Dock=Fill trong dòng riêng để trải đều toàn bề ngang khung nhật ký.
             var progressRow = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true };
@@ -554,6 +565,8 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             var statusRow = new FlowLayoutPanel { Dock = DockStyle.Top, WrapContents = true, AutoSize = true };
             statusRow.Controls.Add(_lblStatus);
             statusRow.Controls.Add(_lblSpeed);
+            statusRow.Controls.Add(_lblVersion);
+            _lblVersion.Text = "Phiên bản " + AppVersion;
 
             var preflightArea = new FlowLayoutPanel { Dock = DockStyle.Top, WrapContents = true, AutoSize = true };
             preflightArea.Controls.Add(_lblPreflight);
@@ -597,6 +610,7 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             _btnCancel.Click += (_, _) => _cts?.Cancel();
             _btnExportLog.Click += (_, _) => ExportLogAsync();
             _btnClearLog.Click += (_, _) => _txtLog.Clear();
+            _btnCheckUpdate.Click += async (_, _) => await CheckForUpdatesAsync();
             _btnLoadTables.Click += async (_, _) => await LoadTablesAsync();
             _btnSelectAll.Click += (_, _) => SetAllTablesChecked(true);
             _btnSelectNone.Click += (_, _) => SetAllTablesChecked(false);
@@ -1932,11 +1946,159 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             }
         }
 
+        /// <summary>Phiên bản app đang chạy (nguồn sự thật cho updater).</summary>
+        private static Version AppVersion =>
+            Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0);
+
+        /// <summary>Bản đang chạy có phải bản cài đặt (Inno Setup) không.</summary>
+        private static bool IsInstalledMode()
+        {
+            try
+            {
+                return File.Exists(Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "unins000.exe"));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Nút "Kiểm tra cập nhật": hỏi GitHub Releases, có bản mới thì hỏi
+        /// tải + cài đặt. Không đụng database nào.
+        /// </summary>
+        private async Task CheckForUpdatesAsync()
+        {
+            SetBusy(true);
+            _lblStatus.Text = "Đang kiểm tra cập nhật...";
+            try
+            {
+                var current = AppVersion;
+                AppendLog($"[THÔNG TIN] Phiên bản hiện tại: {current}. Đang hỏi GitHub...");
+                using var svc = new UpdateService(
+                    logger: new UiLogger(AppendLog, "Updater"));
+                var info = await svc.CheckForUpdateAsync(current, preferInstaller: IsInstalledMode());
+                if (info == null)
+                {
+                    _lblStatus.Text = "Không kiểm tra được cập nhật.";
+                    AppendLog("[CẢNH BÁO] Không kiểm tra được cập nhật (mất mạng hoặc chưa có release).");
+                    MessageBox.Show("Không kiểm tra được cập nhật.\nHãy kiểm tra mạng rồi thử lại.",
+                        "Cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                if (!info.Available)
+                {
+                    _lblStatus.Text = $"Đang dùng bản mới nhất ({current}).";
+                    AppendLog($"[THÔNG TIN] Đang dùng bản mới nhất ({current}).");
+                    MessageBox.Show($"Bạn đang dùng bản mới nhất ({current}).",
+                        "Cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                AppendLog($"[THÔNG TIN] Có bản mới {info.LatestVersion} ({info.FileName}).");
+                var notes = (info.ReleaseNotes ?? "").Trim();
+                if (notes.Length > 1500)
+                    notes = notes.Substring(0, 1500) + "\n...";
+                var ask = MessageBox.Show(
+                    $"Có bản mới {info.LatestVersion} (bạn đang dùng {current}).\n\n"
+                    + $"Ghi chú phát hành:\n{notes}\n\nTải và cài đặt ngay?",
+                    "Có bản cập nhật", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (ask != DialogResult.Yes)
+                    return;
+
+                await DownloadAndInstallAsync(svc, info);
+            }
+            catch (OperationCanceledException)
+            {
+                _lblStatus.Text = "Đã hủy kiểm tra cập nhật.";
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "Lỗi cập nhật: " + ex.Message;
+                AppendLog("[LỖI] Cập nhật thất bại: " + ex.Message);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        /// <summary>Tải file cập nhật (hiện % lên thanh tiến trình) rồi cài đặt.</summary>
+        private async Task DownloadAndInstallAsync(UpdateService svc, UpdateInfo info)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "SqlMigrator_Update");
+            var dest = Path.Combine(dir, info.FileName);
+            _lblStatus.Text = $"Đang tải {info.FileName}...";
+            var progress = new Progress<double>(p =>
+            {
+                _progressBar.Value = Math.Clamp((int)p, 0, 100);
+                _lblStatus.Text = $"Đang tải {info.FileName}... {p:0}%";
+            });
+            await svc.DownloadAsync(info.DownloadUrl, dest, progress);
+            AppendLog($"[THÔNG TIN] Đã tải xong: {dest}");
+
+            if (info.IsInstaller)
+            {
+                // Bản cài đặt: chạy setup rồi thoát để installer thay file.
+                AppendLog("[THÔNG TIN] Đang mở bộ cài đặt mới, app sẽ tự thoát...");
+                Process.Start(new ProcessStartInfo(dest) { UseShellExecute = true });
+                Application.Exit();
+                return;
+            }
+
+            ApplyPortableUpdate(dest);
+        }
+
+        /// <summary>
+        /// Bản portable (zip): bung ra thư mục tạm rồi hẹn script chép đè sau khi
+        /// app thoát, xong tự mở lại app mới.
+        /// </summary>
+        private void ApplyPortableUpdate(string zipPath)
+        {
+            var appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var stage = Path.Combine(Path.GetTempPath(), "SqlMigrator_Update", "stage");
+            if (Directory.Exists(stage))
+                Directory.Delete(stage, recursive: true);
+            Directory.CreateDirectory(stage);
+
+            ZipFile.ExtractToDirectory(zipPath, stage, overwriteFiles: true);
+
+            // Zip có thể bọc thêm 1 thư mục con chứa exe — tìm thư mục có exe.
+            var source = stage;
+            var nested = Directory.GetDirectories(stage)
+                .FirstOrDefault(d => File.Exists(Path.Combine(d, "SqlMigrator.exe")));
+            if (nested != null)
+                source = nested;
+
+            var exePath = Path.Combine(appDir, "SqlMigrator.exe");
+            var cmdPath = Path.Combine(Path.GetTempPath(), "SqlMigrator_Update", "apply-update.cmd");
+            var pid = Environment.ProcessId;
+            File.WriteAllText(cmdPath,
+                "@echo off\r\n"
+                + ":wait\r\n"
+                + $"tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)\r\n"
+                + $"robocopy \"{source}\" \"{appDir}\" /E /IS /IT /NFL /NDL /NJH /NJS\r\n"
+                + $"start \"\" \"{exePath}\"\r\n"
+                + "(goto) 2>nul & del \"%~f0\"\r\n");
+
+            AppendLog("[THÔNG TIN] Đang áp dụng bản portable mới, app sẽ tự thoát và mở lại...");
+            Process.Start(new ProcessStartInfo(cmdPath)
+            {
+                UseShellExecute = true,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            Application.Exit();
+        }
+
         private void SetBusy(bool busy)
         {
             _btnStart.Enabled = !busy;
             _btnVerify.Enabled = !busy;
             _btnReconcile.Enabled = !busy;
+            _btnCheckUpdate.Enabled = !busy;
             _btnLoadTables.Enabled = !busy;
             _btnLoadObjects.Enabled = !busy;
             _btnCancel.Enabled = busy;
