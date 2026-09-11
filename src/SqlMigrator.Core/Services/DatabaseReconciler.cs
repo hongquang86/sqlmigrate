@@ -28,6 +28,10 @@ namespace SqlMigrator.Core.Services
         private readonly ISchemaBuilder _schemaBuilder;
         private readonly IConstraintManager _constraints;
         private readonly SqlRewriteEngine? _rewriteEngine;
+        private readonly ReconcileDataSync _dataSync;
+
+        /// <summary>Schema nguồn lần quét gần nhất (để sync dữ liệu không cần quét lại).</summary>
+        private SchemaModel? _lastSchema;
 
         public DatabaseReconciler(MigrationOptions options, ILogger logger,
             ISchemaExtractor extractor, ISchemaBuilder schemaBuilder, IConstraintManager constraints)
@@ -37,6 +41,7 @@ namespace SqlMigrator.Core.Services
             _extractor = extractor;
             _schemaBuilder = schemaBuilder;
             _constraints = constraints;
+            _dataSync = new ReconcileDataSync(options, logger);
 
             // Tải rewrite rules từ config file (nếu có).
             try
@@ -85,6 +90,7 @@ namespace SqlMigrator.Core.Services
                 // 1) Trích xuất cấu trúc nguồn.
                 progress?.Report(new MigrationProgress(3, "Đang trích xuất cấu trúc nguồn..."));
                 var schema = await _extractor.ExtractAsync(ct).ConfigureAwait(false);
+                _lastSchema = schema;
 
                 // 2) Đọc inventory đích (chỉ SELECT, không ghi).
                 progress?.Report(new MigrationProgress(15, "Đang đọc cấu trúc đích..."));
@@ -347,6 +353,44 @@ namespace SqlMigrator.Core.Services
                 sw.Elapsed, fixedList.Count, failedList.Count, skippedList.Count);
 
             return fixResult;
+        }
+
+        // ============================================================================
+        // PHASE 3: SYNC DỮ LIỆU — chỉ thêm + sửa trên ĐÍCH, KHÔNG xóa, KHÔNG ghi nguồn.
+        // ============================================================================
+
+        /// <summary>Lấy schema nguồn lần quét gần nhất (quét mới nếu chưa có).</summary>
+        private async Task<SchemaModel> GetSchemaForSyncAsync(CancellationToken ct)
+        {
+            if (_lastSchema != null)
+                return _lastSchema;
+            _logger.LogInformation("Chưa có schema lần quét — trích xuất mới để sync dữ liệu.");
+            _lastSchema = await _extractor.ExtractAsync(ct).ConfigureAwait(false);
+            return _lastSchema;
+        }
+
+        /// <summary>
+        /// Ước lượng sync dữ liệu các bảng đã chọn (không ghi gì).
+        /// Mỗi bảng cho biết sẽ thêm/sửa bao nhiêu dòng, hoặc lý do bỏ qua.
+        /// </summary>
+        public async Task<IReadOnlyList<DataSyncPreviewItem>> PreviewDataSyncAsync(
+            IReadOnlyList<string> tableNames,
+            CancellationToken ct = default, IProgress<MigrationProgress>? progress = null)
+        {
+            var schema = await GetSchemaForSyncAsync(ct).ConfigureAwait(false);
+            return await _dataSync.PreviewAsync(schema, tableNames, ct, progress).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Sync dữ liệu các bảng đã chọn: nguồn → đích, chỉ thêm dòng thiếu +
+        /// sửa dòng lệch giá trị, KHÔNG xóa dòng đích. KHÔNG ghi nguồn.
+        /// </summary>
+        public async Task<DataSyncResult> SyncDataAsync(
+            IReadOnlyList<string> tableNames,
+            CancellationToken ct = default, IProgress<MigrationProgress>? progress = null)
+        {
+            var schema = await GetSchemaForSyncAsync(ct).ConfigureAwait(false);
+            return await _dataSync.SyncAsync(schema, tableNames, ct, progress).ConfigureAwait(false);
         }
 
         // ============================================================================

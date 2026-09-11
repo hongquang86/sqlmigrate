@@ -201,4 +201,61 @@ namespace SqlMigrator.Core.Models
             Errors = list;
         }
     }
+
+    /// <summary>
+    /// Một dòng xem trước sync dữ liệu: app SẼ thêm/sửa bao nhiêu dòng nếu user OK.
+    /// Chỉ đếm, không ghi database nào.
+    /// </summary>
+    public sealed class DataSyncPreviewItem
+    {
+        public string Table { get; set; } = string.Empty;
+        public long SourceRows { get; set; }
+        public long DestRows { get; set; }
+        public long WillInsert { get; set; }
+        public long WillUpdate { get; set; }
+        /// <summary>True khi bảng này không sync được (không khóa ổn định...).</summary>
+        public bool Skipped { get; set; }
+        public string? SkipReason { get; set; }
+    }
+
+    /// <summary>Kết quả sync dữ liệu một bảng (chỉ thêm + sửa, không bao giờ xóa).</summary>
+    public sealed class DataSyncTableResult
+    {
+        public string Table { get; set; } = string.Empty;
+        public long Inserted { get; set; }
+        public long Updated { get; set; }
+        public bool Skipped { get; set; }
+        public string? SkipReason { get; set; }
+        public IReadOnlyList<string> Errors { get; set; } = Array.Empty<string>();
+    }
+
+    /// <summary>Kết quả một đợt sync dữ liệu các bảng đã chọn.</summary>
+    public sealed class DataSyncResult
+    {
+        public bool Success { get; set; } = true;
+        public TimeSpan Elapsed { get; set; }
+        public IReadOnlyList<DataSyncTableResult> Tables { get; set; } = Array.Empty<DataSyncTableResult>();
+
+        public long TotalInserted
+        {
+            get
+            {
+                long sum = 0;
+                foreach (var t in Tables)
+                    sum += t.Inserted;
+                return sum;
+            }
+        }
+
+        public long TotalUpdated
+        {
+            get
+            {
+                long sum = 0;
+                foreach (var t in Tables)
+                    sum += t.Updated;
+                return sum;
+            }
+        }
+    }
 }

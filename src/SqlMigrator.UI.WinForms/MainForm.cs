@@ -1360,6 +1360,14 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 // user chỉ đọc và làm theo từng bước, không cần viết SQL tay.
                 ShowResidualDecisionsDialog(fixResult);
 
+                // Pha 3: Sync dữ liệu các bảng lệch đã chọn (thêm + sửa, không xóa).
+                // Xem trước số dòng sẽ đổi, user OK mới ghi đích.
+                var dataIssues = selectedIssues
+                    .Where(i => i.Type == ReconcileIssueType.DataDifference)
+                    .ToList();
+                if (dataIssues.Count > 0)
+                    await RunDataSyncAsync(context, dataIssues, progress, _cts.Token);
+
                 _lblStatus.Text = fixResult.Success
                     ? $"Xử lý xong — thành công {fixResult.FixedIssues.Count}, bỏ qua {fixResult.SkippedIssues.Count}."
                     : $"Xử lý xong — thành công {fixResult.FixedIssues.Count}, thất bại {fixResult.FailedIssues.Count}.";
@@ -1577,6 +1585,165 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
 
             MessageBox.Show(string.Join(Environment.NewLine, lines),
                 "Kết quả Quét Đồng bộ 100%",
+                MessageBoxButtons.OK,
+                result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// Pha 3 Đồng bộ 100%: xem trước sync dữ liệu (đếm sẽ thêm/sửa, không ghi),
+        /// user OK mới ghi đích. Chỉ thêm + sửa, không bao giờ xóa dòng đích.
+        /// </summary>
+        private async Task RunDataSyncAsync(
+            MigrationContext context,
+            List<ReconcileIssue> dataIssues,
+            IProgress<MigrationProgress> progress,
+            CancellationToken ct)
+        {
+            var tables = dataIssues
+                .Select(i => i.ObjectName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            _lblStatus.Text = $"Đang ước lượng sync {tables.Count} bảng...";
+            AppendLog($"[THÔNG TIN] Ước lượng sync dữ liệu {tables.Count} bảng đã chọn (chỉ đếm, chưa ghi)...");
+            _progressBar.Value = 0;
+
+            var preview = await context.DatabaseReconciler.PreviewDataSyncAsync(
+                tables, ct, progress);
+            foreach (var item in preview)
+            {
+                if (item.Skipped)
+                    AppendLog($"[BỎ QUA] Sync {item.Table}: {item.SkipReason}");
+                else
+                    AppendLog($"[THÔNG TIN] Sync {item.Table}: nguồn {item.SourceRows:N0} dòng, "
+                        + $"đích {item.DestRows:N0} dòng → sẽ thêm {item.WillInsert:N0}, sửa {item.WillUpdate:N0}.");
+            }
+
+            if (!ShowDataSyncPreview(preview))
+            {
+                _lblStatus.Text = "Đã hủy sync dữ liệu.";
+                AppendLog("[THÔNG TIN] Người dùng hủy sync dữ liệu sau khi xem trước.");
+                return;
+            }
+
+            var runnable = preview.Where(p => !p.Skipped && (p.WillInsert > 0 || p.WillUpdate > 0)).ToList();
+            if (runnable.Count == 0)
+            {
+                _lblStatus.Text = "Không có gì để sync — dữ liệu đã khớp hoặc các bảng đều bỏ qua.";
+                AppendLog("[THÔNG TIN] Không có gì để sync.");
+                return;
+            }
+
+            _lblStatus.Text = $"Đang sync dữ liệu {runnable.Count} bảng...";
+            AppendLog($"[THÔNG TIN] Bắt đầu sync dữ liệu {runnable.Count} bảng (chỉ thêm + sửa, không xóa)...");
+            _progressBar.Value = 0;
+
+            var syncResult = await context.DatabaseReconciler.SyncDataAsync(
+                runnable.Select(p => p.Table).ToList(), ct, progress);
+            ShowDataSyncSummary(syncResult);
+
+            _lblStatus.Text = syncResult.Success
+                ? $"Sync xong — thêm {syncResult.TotalInserted:N0}, sửa {syncResult.TotalUpdated:N0}."
+                : $"Sync xong có lỗi — thêm {syncResult.TotalInserted:N0}, sửa {syncResult.TotalUpdated:N0}.";
+        }
+
+        /// <summary>Hộp xem trước sync: bảng nào thêm/sửa bao nhiêu, bảng nào bỏ qua vì sao.</summary>
+        private bool ShowDataSyncPreview(IReadOnlyList<DataSyncPreviewItem> preview)
+        {
+            using var form = new Form
+            {
+                Text = "Xem trước sync dữ liệu (chỉ thêm + sửa, không xóa)",
+                Size = new Size(720, 420),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false
+            };
+
+            var grid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                ReadOnly = true,
+                MultiSelect = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                RowHeadersVisible = false
+            };
+            grid.Columns.Add("Table", "Bảng");
+            grid.Columns.Add("Source", "Nguồn (dòng)");
+            grid.Columns.Add("Dest", "Đích (dòng)");
+            grid.Columns.Add("Insert", "Sẽ thêm");
+            grid.Columns.Add("Update", "Sẽ sửa");
+            grid.Columns.Add("Note", "Ghi chú");
+
+            foreach (var item in preview)
+            {
+                var rowIdx = grid.Rows.Add(
+                    item.Table,
+                    item.Skipped ? "-" : item.SourceRows.ToString("N0"),
+                    item.Skipped ? "-" : item.DestRows.ToString("N0"),
+                    item.Skipped ? "-" : item.WillInsert.ToString("N0"),
+                    item.Skipped ? "-" : item.WillUpdate.ToString("N0"),
+                    item.Skipped ? item.SkipReason : "Sẵn sàng sync");
+                if (item.Skipped)
+                    grid.Rows[rowIdx].DefaultCellStyle.ForeColor = Color.Gray;
+            }
+
+            var note = new Label
+            {
+                Text = "Bấm OK để ghi lên database ĐÍCH (nguồn không đổi). Bảng bỏ qua giữ nguyên.",
+                Dock = DockStyle.Top,
+                Height = 28,
+                Padding = new Padding(8, 6, 8, 0)
+            };
+
+            var btnPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 40,
+                FlowDirection = FlowDirection.RightToLeft
+            };
+            var btnOk = new Button { Text = "OK — sync ngay", DialogResult = DialogResult.OK, Width = 130 };
+            var btnCancel = new Button { Text = "Hủy", DialogResult = DialogResult.Cancel, Width = 80 };
+            btnPanel.Controls.Add(btnOk);
+            btnPanel.Controls.Add(btnCancel);
+
+            form.Controls.Add(grid);
+            form.Controls.Add(note);
+            form.Controls.Add(btnPanel);
+            form.AcceptButton = btnOk;
+            form.CancelButton = btnCancel;
+
+            return form.ShowDialog(this) == DialogResult.OK;
+        }
+
+        /// <summary>Hộp tóm tắt kết quả sync dữ liệu.</summary>
+        private void ShowDataSyncSummary(DataSyncResult result)
+        {
+            var lines = new List<string>
+            {
+                result.Success ? "✔ Sync dữ liệu hoàn tất." : "✘ Sync dữ liệu hoàn tất có lỗi.",
+                "Tổng thời gian: " + result.Elapsed.ToString(@"hh\:mm\:ss\.fff"),
+                $"Đã thêm: {result.TotalInserted:N0} dòng",
+                $"Đã sửa: {result.TotalUpdated:N0} dòng"
+            };
+
+            foreach (var t in result.Tables)
+            {
+                if (t.Skipped)
+                    lines.Add($"  - {t.Table}: bỏ qua ({t.SkipReason})");
+                else if (t.Errors.Count > 0)
+                    lines.Add($"  ✘ {t.Table}: lỗi — {string.Join("; ", t.Errors.Take(2))}");
+                else
+                    lines.Add($"  ✔ {t.Table}: thêm {t.Inserted:N0}, sửa {t.Updated:N0}.");
+            }
+
+            foreach (var line in lines)
+                AppendLog((line.StartsWith("  ✘") ? "[LỖI] Sync " : "[THÔNG TIN] Sync ") + line.Trim());
+
+            MessageBox.Show(string.Join(Environment.NewLine, lines),
+                "Kết quả sync dữ liệu",
                 MessageBoxButtons.OK,
                 result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }

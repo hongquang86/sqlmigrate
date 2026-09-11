@@ -72,6 +72,23 @@ namespace SqlMigrator.Core.Interfaces
         Task<ReconcileFixResult> FixAsync(IReadOnlyList<ReconcileIssue> issues,
             CancellationToken ct = default,
             IProgress<MigrationProgress>? progress = null);
+
+        /// <summary>
+        /// Ước lượng sync dữ liệu (không ghi gì): mỗi bảng sẽ thêm/sửa bao nhiêu dòng.
+        /// </summary>
+        Task<IReadOnlyList<DataSyncPreviewItem>> PreviewDataSyncAsync(
+            IReadOnlyList<string> tableNames,
+            CancellationToken ct = default,
+            IProgress<MigrationProgress>? progress = null);
+
+        /// <summary>
+        /// Sync dữ liệu các bảng đã chọn: nguồn → đích, chỉ thêm dòng thiếu +
+        /// sửa dòng lệch giá trị, KHÔNG xóa. KHÔNG ghi database nguồn.
+        /// </summary>
+        Task<DataSyncResult> SyncDataAsync(
+            IReadOnlyList<string> tableNames,
+            CancellationToken ct = default,
+            IProgress<MigrationProgress>? progress = null);
     }
 
     /// <summary>
