@@ -1,5 +1,9 @@
 #define AppName "SQL Migrator"
+; AppVersion truyền từ ngoài bằng ISCC /DAppVersion="x.y.z" (workflow release);
+; build tay không truyền thì dùng mặc định dưới đây.
+#ifndef AppVersion
 #define AppVersion "1.1.0"
+#endif
 #define AppPublisher "HongQuang"
 #define AppExeName "SqlMigrator.exe"
 #define AppDirName "SQL Migrator"
@@ -10,7 +14,7 @@ AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppDirName}
 DefaultGroupName={#AppName}
-OutputDir=D:\Projects\AI-APP\MigrateSQL\App\Installer
+OutputDir={#SourcePath}\App\Installer
 OutputBaseFilename=SQLMigrator_Setup_{#AppVersion}
 Compression=lzma/ultra64
 SolidCompression=yes
@@ -18,8 +22,8 @@ ArchitecturesInstallIn64BitMode=x64
 ArchitecturesAllowed=x64
 DisableDirPage=no
 DisableProgramGroupPage=no
-LicenseFile=D:\Projects\AI-APP\MigrateSQL\LICENSE.txt
-InfoBeforeFile=D:\Projects\AI-APP\MigrateSQL\README.txt
+LicenseFile={#SourcePath}\LICENSE.txt
+InfoBeforeFile={#SourcePath}\README.txt
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#AppExeName}
 AppUpdatesURL=https://github.com/hongquang86/sqlmigrate/releases
@@ -31,7 +35,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 ; Đóng gói TOÀN BỘ output publish (exe + Core.dll + rewrite-rules.json + phụ thuộc).
 ; Trước đây chỉ đóng gói exe nên bản cài đặt thiếu file và crash khi chạy.
-Source: "D:\Projects\AI-APP\MigrateSQL\App\Publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
+Source: "{#SourcePath}\App\Publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"

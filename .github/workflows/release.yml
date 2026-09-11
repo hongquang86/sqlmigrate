@@ -42,11 +42,10 @@ jobs:
       - name: Cài Inno Setup
         run: choco install innosetup --no-progress -y
 
-      - name: Build installer
+      - name: Build installer (version theo tag)
         shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" SQLMigrator_Setup.iss
-          Rename-Item "App\Installer\SQLMigrator_Setup_*.exe" ("SQLMigrator_Setup_" + "${{ steps.ver.outputs.number }}" + ".exe") -ErrorAction SilentlyContinue
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="${{ steps.ver.outputs.number }}" SQLMigrator_Setup.iss
           Get-ChildItem App\Installer\
 
       - name: Đóng gói portable zip
