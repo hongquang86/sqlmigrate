@@ -221,7 +221,7 @@ namespace SqlMigrator.UI
             MinimumSize = new Size(1120, 760);
             Size = new Size(1280, 900);
             Font = new Font("Segoe UI", 9.25F);
-            Icon = null;
+            Icon = LoadAppIcon();
         }
 
         private void BuildLayout()
@@ -2091,6 +2091,23 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 WindowStyle = ProcessWindowStyle.Hidden
             });
             Application.Exit();
+        }
+
+        /// <summary>Nạp icon app từ resource nhúng (rớt êm nếu thiếu).</summary>
+        private static Icon? LoadAppIcon()
+        {
+            try
+            {
+                var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico");
+                if (stream == null)
+                    return null;
+                using (stream)
+                    return new Icon(stream);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private void SetBusy(bool busy)

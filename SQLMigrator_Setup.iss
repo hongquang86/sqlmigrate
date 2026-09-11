@@ -26,6 +26,7 @@ LicenseFile={#SourcePath}\LICENSE.txt
 InfoBeforeFile={#SourcePath}\README.txt
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#AppExeName}
+SetupIconFile={#SourcePath}\assets\app.ico
 AppUpdatesURL=https://github.com/hongquang86/sqlmigrate/releases
 AppSupportURL=https://github.com/hongquang86/sqlmigrate/issues
 

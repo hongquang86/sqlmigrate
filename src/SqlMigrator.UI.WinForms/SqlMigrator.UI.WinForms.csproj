@@ -8,11 +8,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SqlMigrator.UI</RootNamespace>
     <AssemblyName>SqlMigrator</AssemblyName>
+    <!-- Icon app (mẫu A): icon file exe + nhúng resource cho icon cửa sổ. -->
+    <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
     <!-- Nguồn sự thật duy nhất cho phiên bản app (updater so sánh với release GitHub).
          Khi phát hành bản mới: tăng số này + AppVersion trong SQLMigrator_Setup.iss
          rồi gắn tag trùng số (VD: v1.2.0). CI build release cũng truyền Version từ tag. -->
     <Version>1.1.2</Version>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\assets\app.ico" LogicalName="app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SqlMigrator.Core\SqlMigrator.Core.csproj" />
