@@ -125,4 +125,45 @@ public class StarExpanderTests
     {
         Assert.Contains("phụ thuộc", DatabaseReconciler.DescribeMissingDependency(null));
     }
+
+    [Fact]
+    public void ExtractCrossDatabaseRefs_ThreePartForms_Detected()
+    {
+        var refs = DatabaseReconciler.ExtractCrossDatabaseRefs(
+            "SELECT * FROM ADEL9200.dbo.ROOMINFO UNION SELECT * FROM [OtherDb].[dbo].[T];",
+            "REHOSPOS");
+
+        Assert.Contains("ADEL9200.dbo.ROOMINFO", refs);
+        Assert.Contains("OtherDb.dbo.T", refs);
+    }
+
+    [Fact]
+    public void ExtractCrossDatabaseRefs_OwnDatabase_Excluded()
+    {
+        var refs = DatabaseReconciler.ExtractCrossDatabaseRefs(
+            "SELECT * FROM REHOSPOS.dbo.T1 JOIN [REHOSPOS].[dbo].[T2] ON 1=1;",
+            "rehospos");
+
+        Assert.Empty(refs);
+    }
+
+    [Fact]
+    public void ExtractCrossDatabaseRefs_TwoPartAndAlias_Ignored()
+    {
+        var refs = DatabaseReconciler.ExtractCrossDatabaseRefs(
+            "SELECT a.Id FROM dbo.T AS a;",
+            "REHOSPOS");
+
+        Assert.Empty(refs);
+    }
+
+    [Fact]
+    public void ExtractCrossDatabaseRefs_FourPartLinkedServer_Detected()
+    {
+        var refs = DatabaseReconciler.ExtractCrossDatabaseRefs(
+            "SELECT * FROM [LINKED].[RemoteDb].[dbo].[T];",
+            "REHOSPOS");
+
+        Assert.Contains("LINKED.RemoteDb", refs);
+    }
 }

@@ -831,6 +831,40 @@ namespace SqlMigrator.Core.Services
                         }
                     }).ToList();
                 }
+
+                // Cảnh báo TRƯỚC khi fix: tham chiếu sang database khác (VD: ADEL9200.dbo.T)
+                // thì app không thể tự tạo — user phải di chuyển database đó trước.
+                var sourceDb = new SqlConnectionStringBuilder(_options.SourceConnectionString).InitialCatalog;
+                var crossDbs = ExtractCrossDatabaseRefs(issue.SourceScript, sourceDb);
+                if (crossDbs.Count > 0)
+                {
+                    var dbNames = crossDbs
+                        .Select(r =>
+                        {
+                            var segs = r.Split('.');
+                            return segs.Length >= 4 ? segs[0] + "." + segs[1] : segs[0];
+                        })
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    result.Issues = result.Issues.Concat(new[]
+                    {
+                        new ReconcileIssue
+                        {
+                            Type = ReconcileIssueType.BrokenDependency,
+                            ObjectName = issue.ObjectName,
+                            ObjectType = issue.ObjectType,
+                            Description = $"'{issue.ObjectName}' tham chiếu sang database khác: {string.Join(", ", crossDbs)}.",
+                            SuggestedAction = $"Di chuyển database {string.Join(", ", dbNames)} sang server đích trước "
+                                + "(hoặc tạo bảng tương ứng trên đích), rồi quét lại Đồng bộ 100%. "
+                                + "App chỉ di chuyển trong một database nên không tự tạo được.",
+                            Severity = ReconcileIssueSeverity.Warning,
+                            Dependencies = crossDbs,
+                            CanAutoFix = false
+                        }
+                    }).ToList();
+                    _logger.LogWarning("'{Name}' tham chiếu database khác: {Refs}.",
+                        issue.ObjectName, string.Join(", ", crossDbs));
+                }
             }
         }
 
@@ -1308,6 +1342,61 @@ namespace SqlMigrator.Core.Services
                 return dot <= 0 || !knownSchemas.Contains(r.Substring(0, dot));
             });
             return refs.ToList();
+        }
+
+        /// <summary>
+        /// Trích các tham chiếu sang DATABASE KHÁC trong script (tên 3-4 phần:
+        /// db.schema.object hoặc server.db.schema.object; ngoặc hoặc không ngoặc).
+        /// Trả về tên đầy đủ ("ADEL9200.dbo.ROOMINFO"). Bỏ qua tham chiếu về chính
+        /// database nguồn (ownDbName) vì chúng tự khớp khi đích giữ nguyên tên.
+        /// Dùng để cảnh báo TRƯỚC khi fix: app không thể tự tạo object khác database.
+        /// </summary>
+        internal static IReadOnlyList<string> ExtractCrossDatabaseRefs(string? script, string? ownDbName)
+        {
+            var refs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(script))
+                return refs.ToList();
+
+            // Một mẫu seg chịu mọi dạng ngoặc/không ngoặc lẫn lộn:
+            // seg = [name] hoặc tên trần. Đếm số seg để phân biệt 3 và 4 phần.
+            const string seg = @"(?:\[([^\]]+)\]|([A-Za-z_][\w$#@]*))";
+            string SegValue(Match mm, int a, int b) =>
+                mm.Groups[a].Success ? mm.Groups[a].Value : mm.Groups[b].Value;
+
+            // Dạng 4 phần srv.db.s.o → ghi "srv.db".
+            foreach (Match m in Regex.Matches(script,
+                seg + @"\s*\.\s*" + seg + @"\s*\.\s*" + seg + @"\s*\.\s*" + seg))
+            {
+                var srv = SegValue(m, 1, 2);
+                var db = SegValue(m, 3, 4);
+                if (srv.Length > 0 && db.Length > 0)
+                    refs.Add(srv + "." + db);
+            }
+
+            // Dạng 3 phần db.s.o (lookbehind/lookahead chặn đuôi của dạng 4 phần).
+            foreach (Match m in Regex.Matches(script,
+                @"(?<![\w@#\[\].])" + seg + @"\s*\.\s*" + seg + @"\s*\.\s*" + seg + @"(?!\s*\.\s*(?:\[|[A-Za-z_]))"))
+            {
+                var db = SegValue(m, 1, 2);
+                var s = SegValue(m, 3, 4);
+                var o = SegValue(m, 5, 6);
+                if (db.Length > 0 && s.Length > 0 && o.Length > 0)
+                    refs.Add(db + "." + s + "." + o);
+            }
+
+            // Bỏ tham chiếu về chính database nguồn (giữ nguyên tên trên đích thì tự khớp).
+            if (!string.IsNullOrWhiteSpace(ownDbName))
+            {
+                var own = ownDbName!.Trim('[', ']', ' ');
+                refs.RemoveWhere(r =>
+                {
+                    var segs = r.Split('.');
+                    // 3 phần: segs[0] là db; 4 phần "srv.db": segs[1] là db.
+                    var dbPart = segs.Length >= 4 ? segs[1] : segs[0];
+                    return dbPart.Equals(own, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+            return refs.OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         // ============================================================================
