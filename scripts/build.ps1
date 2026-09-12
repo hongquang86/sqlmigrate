@@ -1,5 +1,5 @@
 ﻿# ============================================================
-#  SQL Migrator — Script build toàn bộ solution
+#  SQL Management Tools — Script build toàn bộ solution
 #  Cho phép chỉ định đường dẫn SDK .NET 8 (bản cài user-scope).
 #  Cách dùng:        .\build.ps1
 #  Build + test:     .\build.ps1 -RunTests

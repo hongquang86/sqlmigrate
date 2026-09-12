@@ -420,6 +420,19 @@ namespace SqlMigrator.Core.Services
             return rows;
         }
 
+        /// <summary>
+        /// Flag bulk copy cho sync: luôn TableLock; KÈM KeepIdentity khi chép giá trị
+        /// identity tường minh. Thiếu KeepIdentity thì dù IDENTITY_INSERT đã ON,
+        /// bulk vẫn từ chối (lỗi 545) — đúng bug từng gặp với sysdiagrams.
+        /// </summary>
+        internal static SqlBulkCopyOptions BuildBulkOptions(bool identityOn)
+        {
+            var options = SqlBulkCopyOptions.TableLock;
+            if (identityOn)
+                options |= SqlBulkCopyOptions.KeepIdentity;
+            return options;
+        }
+
         private async Task<long> BulkInsertAsync(
             SqlConnection dest, SqlTransaction tx,
             TableSchema table, TransferTablePlan plan,
@@ -447,7 +460,7 @@ namespace SqlMigrator.Core.Services
             }
             try
             {
-                using var bulk = new SqlBulkCopy(dest, SqlBulkCopyOptions.TableLock, tx)
+                using var bulk = new SqlBulkCopy(dest, BuildBulkOptions(identityOn), tx)
                 {
                     DestinationTableName = table.QualifiedName,
                     BatchSize = insertKeys.Count,

@@ -1,4 +1,4 @@
-#define AppName "SQL Migrator"
+#define AppName "SQL Management Tools"
 ; AppVersion truyền từ ngoài bằng ISCC /DAppVersion="x.y.z" (workflow release);
 ; build tay không truyền thì dùng mặc định dưới đây.
 #ifndef AppVersion
@@ -6,10 +6,13 @@
 #endif
 #define AppPublisher "HongQuang"
 #define AppExeName "SqlMigrator.exe"
-#define AppDirName "SQL Migrator"
+#define AppDirName "SQL Management Tools"
 
 [Setup]
 AppName={#AppName}
+; AppId CỐ ĐỊNH để Windows/Inno nhận ra cùng một app qua các lần đổi tên —
+; thiếu nó, bản đổi tên sẽ cài song song thay vì nâng cấp bản cũ.
+AppId={{E1DBDBD1-008A-4E4E-B4A4-916AA9E8BB82}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppDirName}

@@ -1,4 +1,4 @@
-# SQL Migrator
+# SQL Management Tools
 
 Công cụ **di chuyển database SQL Server** (migrate) với giao diện **Windows Forms**.
 Ưu điểm nổi bật: giữ nguyên cấu trúc (bảng, khóa, index, view, proc, function, trigger,

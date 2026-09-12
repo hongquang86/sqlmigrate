@@ -1,6 +1,6 @@
 <# 
 .SYNOPSIS
-    Build SQL Migrator single-file self-contained executable and Inno Setup installer.
+    Build SQL Management Tools single-file self-contained executable and Inno Setup installer.
 
 .DESCRIPTION
     Publishes the WinForms project as a single-file self-contained executable

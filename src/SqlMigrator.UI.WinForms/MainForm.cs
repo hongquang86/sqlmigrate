@@ -216,7 +216,7 @@ namespace SqlMigrator.UI
 
         private void ConfigureForm()
         {
-            Text = "SQL Migrator — Di chuyển database SQL Server";
+            Text = "SQL Management Tools — Bộ công cụ quản lý Database Server";
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1120, 760);
             Size = new Size(1280, 900);

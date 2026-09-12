@@ -102,4 +102,22 @@ public class DataSyncPlanTests
         Assert.Equal(expected, ReconcileDataSync.NeedsIdentityInsert(
             destIdentityCols, insertColumns));
     }
+
+    [Fact]
+    public void BuildBulkOptions_IdentityOn_IncludesKeepIdentity()
+    {
+        var options = ReconcileDataSync.BuildBulkOptions(identityOn: true);
+
+        Assert.True(options.HasFlag(Microsoft.Data.SqlClient.SqlBulkCopyOptions.TableLock));
+        Assert.True(options.HasFlag(Microsoft.Data.SqlClient.SqlBulkCopyOptions.KeepIdentity));
+    }
+
+    [Fact]
+    public void BuildBulkOptions_IdentityOff_TableLockOnly()
+    {
+        var options = ReconcileDataSync.BuildBulkOptions(identityOn: false);
+
+        Assert.True(options.HasFlag(Microsoft.Data.SqlClient.SqlBulkCopyOptions.TableLock));
+        Assert.False(options.HasFlag(Microsoft.Data.SqlClient.SqlBulkCopyOptions.KeepIdentity));
+    }
 }
