@@ -1934,7 +1934,7 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
         private static string GetSkipReason(ReconcileIssue issue)
         {
             if (issue.Type == ReconcileIssueType.DataDifference)
-                return "Dữ liệu lệch chỉ báo cáo, không tự sync — cần chọn sync thủ công.";
+                return "Dữ liệu lệch xử lý ở pha sync riêng sau pha fix (xem trước rồi OK mới ghi).";
             if (issue.Type == ReconcileIssueType.BrokenDependency)
                 return "Dependency broken — cần tạo object phụ thuộc trước: "
                     + (issue.Dependencies.Count > 0 ? string.Join(", ", issue.Dependencies) : issue.SuggestedAction);

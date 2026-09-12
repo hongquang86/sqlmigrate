@@ -211,9 +211,10 @@ namespace SqlMigrator.Core.Services
                             done = await FixMissingColumnAsync(issue, ct).ConfigureAwait(false);
                             break;
                         case ReconcileIssueType.DataDifference:
-                            // Dữ liệu lệch: KHÔNG tự sync — user phải xử lý thủ công.
+                            // Dữ liệu lệch không fix ở pha này — pha sync riêng ngay sau đó
+                            // sẽ xem trước rồi OK mới ghi (chỉ thêm + sửa, không xóa).
                             skippedList.Add(issue);
-                            _logger.LogInformation("Bỏ qua dữ liệu lệch {Name}: user cần xử lý thủ công.",
+                            _logger.LogInformation("Để dành dữ liệu lệch {Name} sang pha sync riêng.",
                                 issue.ObjectName);
                             continue;
                         case ReconcileIssueType.BrokenDependency:

@@ -213,12 +213,19 @@ namespace SqlMigrator.Core.Services
             schema.Tables.FirstOrDefault(t =>
                 string.Equals(t.PlainName, tableName, StringComparison.OrdinalIgnoreCase));
 
+        /// <summary>
+        /// Tên 2 phần không ngoặc cho OBJECT_ID (dùng PlainName "dbo.T" — KHÔNG dùng
+        /// QualifiedName.Trim vì Trim ăn ký tự 2 đầu thành "dbo].[T" và OBJECT_ID luôn NULL).
+        /// </summary>
+        internal static string BuildObjectIdName(TableSchema table) =>
+            table.Schema + "." + table.Name;
+
         private static async Task<bool> DestTableExistsAsync(
             SqlConnection dest, TableSchema table, CancellationToken ct)
         {
             using var cmd = new SqlCommand(
                 "SELECT OBJECT_ID(@qname, 'U');", dest) { CommandTimeout = 60 };
-            cmd.Parameters.AddWithValue("@qname", table.QualifiedName.Trim('[', ']'));
+            cmd.Parameters.AddWithValue("@qname", BuildObjectIdName(table));
             var value = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return value != null && value != DBNull.Value;
         }
