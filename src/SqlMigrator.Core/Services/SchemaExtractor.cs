@@ -374,6 +374,14 @@ namespace SqlMigrator.Core.Services
             }
         }
 
+        /// <summary>
+        /// Bảng Diagrams của SSMS (dbo.sysdiagrams): SMO luôn gắn cờ hệ thống nhưng
+        /// catalog tính là bảng người dùng. Nhận diện để di chuyển như bảng thường.
+        /// </summary>
+        internal static bool IsDiagramTable(string? schema, string? name) =>
+            string.Equals(schema, "dbo", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(name, "sysdiagrams", StringComparison.OrdinalIgnoreCase);
+
         private void CollectTables(Database db, ICollection<DatabaseObject> objects, ICollection<TableSchema> tables,
             ICollection<CompatibilityIssue> warnings, TableFilter filter)
         {
@@ -385,7 +393,10 @@ namespace SqlMigrator.Core.Services
             var included = new List<(Table SmoTable, TableSchema Meta, bool HasMeta)>();
             foreach (Table table in db.Tables)
             {
-                if (table.IsSystemObject)
+                // Ngoại lệ: dbo.sysdiagrams (bảng Diagrams của SSMS) bị SMO đánh dấu
+                // IsSystemObject nhưng thực chất là bảng người dùng (is_ms_shipped = 0)
+                // nên mọi kiểm đếm catalog đều tính nó — phải di chuyển để khỏi lệch.
+                if (table.IsSystemObject && !IsDiagramTable(table.Schema, table.Name))
                     continue;
 
                 var meta = tableMetadata.FirstOrDefault(t =>
