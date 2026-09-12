@@ -1,5 +1,8 @@
 using Microsoft.Data.SqlClient;
+using SqlMigrator.Core.Interfaces;
+using SqlMigrator.Core.Models;
 using SqlMigrator.Core.Security;
+using SqlMigrator.Core.Services.DbProviders;
 using SqlMigrator.UI.Services;
 
 namespace SqlMigrator.UI.Components
@@ -23,6 +26,9 @@ namespace SqlMigrator.UI.Components
         private readonly TextBox _txtUser = new();
         private readonly TextBox _txtPassword = new();
         private readonly ComboBox _cmbDatabase = new();
+        private readonly ComboBox _cmbEngine = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly NumericUpDown _numPort = new() { Minimum = 0, Maximum = 65535, Width = 80 };
+        private readonly Label _lblEngineInfo = new() { AutoSize = true, ForeColor = Color.Gray };
         private readonly ComboBox _cmbProfile = new();
         private readonly ComboBox _compatLevelHint = new();
         private readonly RadioButton _rdoWindows = new() { Text = "Xác thực Windows" };
@@ -189,9 +195,8 @@ namespace SqlMigrator.UI.Components
             root.Controls.Add(_txtPassword, 1, 3);
             root.Controls.Add(chkPanel, 3, 3);
 
-            // Hàng 4: Thư mục DB (.mdf) + Chọn… | Thư mục DB (.ldf) + Chọn… (chỉ hiện với server đích)
-            _txtDbDataPath.Dock = DockStyle.Fill;
-            _txtDbLogPath.Dock = DockStyle.Fill;
+                        // Hàng 4: Thư mục DB (.mdf) + Chọn… | Thư mục DB (.ldf) + Chọn… (chỉ hiện với server đích)
+            _txtDbDataPath.Dock = DockStyle.Fill;            _txtDbLogPath.Dock = DockStyle.Fill;
             var dataPathRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
             dataPathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             dataPathRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -207,13 +212,35 @@ namespace SqlMigrator.UI.Components
             root.Controls.Add(_lblDbLog, 2, 4);
             root.Controls.Add(logPathRow, 3, 4);
 
-            // Hàng 5: Tóm tắt an toàn (trải đều cả 2 cột control)
-            root.Controls.Add(_lblSafeSummary, 1, 5);
+            _cmbEngine.DropDownStyle = ComboBoxStyle.DropDownList;
+            foreach (var choice in EngineChoices.All)
+                _cmbEngine.Items.Add(choice.Display);
+            _cmbEngine.SelectedIndex = 0;
+            _cmbEngine.Dock = DockStyle.Fill;
+            _cmbEngine.SelectedIndexChanged += (_, _) => UpdateEngineState();
+
+            // Hàng 5: Hệ CSDL + Port | thông tin nhận diện
+            var engineRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
+            engineRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            engineRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            engineRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var portPanel = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            portPanel.Controls.Add(new Label { Text = "Port:", AutoSize = true, Padding = new Padding(0, 4, 0, 0) });
+            portPanel.Controls.Add(_numPort);
+            engineRow.Controls.Add(_cmbEngine, 0, 0);
+            engineRow.Controls.Add(portPanel, 1, 0);
+            engineRow.Controls.Add(_lblEngineInfo, 2, 0);
+            root.Controls.Add(new Label { Text = "Hệ CSDL:", AutoSize = true }, 0, 5);
+            root.Controls.Add(engineRow, 1, 5);
+            root.SetColumnSpan(engineRow, 3);
+
+            // Hàng 6: Tóm tắt an toàn (trải đều cả 2 cột control)
+            root.Controls.Add(_lblSafeSummary, 1, 6);
             root.SetColumnSpan(_lblSafeSummary, 3);
-            root.RowCount = 6;
+            root.RowCount = 7;
 
             root.RowStyles.Clear();
-            for (var i = 0; i < 5; i++)
+            for (var i = 0; i < 6; i++)
                 root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
@@ -250,6 +277,27 @@ namespace SqlMigrator.UI.Components
             var sql = _rdoSql.Checked;
             _txtUser.Enabled = sql;
             _txtPassword.Enabled = sql;
+        }
+
+        /// <summary>Mục engine đang chọn (mặc định mục đầu = Tự động).</summary>
+        private EngineChoice SelectedEngineChoice()
+        {
+            var idx = _cmbEngine.SelectedIndex;
+            if (idx < 0 || idx >= EngineChoices.All.Count)
+                idx = 0;
+            return EngineChoices.All[idx];
+        }
+
+        /// <summary>
+        /// Đổi engine: tự điền port mặc định khi ô port đang để 0, xóa thông tin
+        /// nhận diện cũ (tránh hiển thị version của engine trước đó).
+        /// </summary>
+        private void UpdateEngineState()
+        {
+            var choice = SelectedEngineChoice();
+            if (_numPort.Value == 0 && choice.DefaultPort > 0)
+                _numPort.Value = choice.DefaultPort;
+            _lblEngineInfo.Text = "";
         }
 
         /// <summary>Mở hộp thoại duyệt thư mục trên CHÍNH server đích (dựa kết nối SQL hiện có), điền vào ô TextBox.</summary>
@@ -464,7 +512,9 @@ namespace SqlMigrator.UI.Components
                 Authentication = auth,
                 UserName = userName,
                 EncryptConnection = _chkEncrypt.Checked,
-                TrustServerCertificate = _chkTrustCertificate.Checked
+                TrustServerCertificate = _chkTrustCertificate.Checked,
+                Engine = SelectedEngineChoice().Value,
+                Port = (int)_numPort.Value
             };
 
             if (auth == AuthenticationMode.SqlLogin)
@@ -500,8 +550,84 @@ namespace SqlMigrator.UI.Components
             }
             _chkEncrypt.Checked = profile.EncryptConnection;
             _chkTrustCertificate.Checked = profile.TrustServerCertificate;
+            var engineIdx = 0;
+            for (var i = 0; i < EngineChoices.All.Count; i++)
+            {
+                if (EngineChoices.All[i].Value.Equals(profile.Engine ?? "",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    engineIdx = i;
+                    break;
+                }
+            }
+            _cmbEngine.SelectedIndex = engineIdx;
+            _numPort.Value = Math.Clamp(profile.Port, 0, 65535);
+            _lblEngineInfo.Text = "";
             UpdateAuthState();
             UpdateSafeSummary();
+        }
+
+        /// <summary>Nhận diện engine cho nút Kiểm tra (không ném lỗi, null = giữ luồng cũ).</summary>
+        private async Task<EngineInfo?> DetectEngineForTestAsync(ConnectionProfile profile)
+        {
+            try
+            {
+                var selected = SelectedEngineChoice().Value;
+                var probe = new DbProbe
+                {
+                    Host = profile.Server,
+                    Port = string.IsNullOrEmpty(selected) ? 0 : profile.Port,
+                    User = profile.UserName,
+                    Password = _txtPassword.Text,
+                    UseWindowsAuth = profile.Authentication == AuthenticationMode.Windows,
+                    TimeoutSeconds = 4
+                };
+                if (!string.IsNullOrEmpty(selected))
+                {
+                    var provider = EngineDetector.GetProvider(EngineInfo.ParseEngine(selected));
+                    if (provider == null)
+                        return null;
+                    return await provider.DetectAsync(probe);
+                }
+                return await EngineDetector.DetectAsync(probe,
+                    new UiLogger(msg => LogSink?.Invoke(msg), "Detect"));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Chốt combobox theo engine vừa nhận diện (không reset port người dùng).</summary>
+        private void SetEngineSelection(DatabaseEngine engine)
+        {
+            for (var i = 0; i < EngineChoices.All.Count; i++)
+            {
+                if (EngineChoices.All[i].Value.Equals(engine.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    _cmbEngine.SelectedIndex = i;
+                    break;
+                }
+            }
+            _lblEngineInfo.Text = "";
+        }
+
+        /// <summary>Hiển thị kết quả nhận diện engine khác SQL + lưu profile để migrate chặn đúng.</summary>
+        private async Task ShowDetectedEngineAsync(
+            ConnectionProfile profile, DatabaseEngine engine, EngineInfo? detected)
+        {
+            await Task.CompletedTask;
+            var info = detected?.Describe() ?? EngineChoices.DisplayOf(engine.ToString());
+            _lblEngineInfo.Text = "Nhận diện: " + info;
+            var note = detected != null && !detected.SupportsMigration
+                ? " Di chuyển engine này chưa hỗ trợ ở bản này."
+                : "";
+            SetConnStatus($"Đã nhận diện {info}.{note}", detected != null);
+            Log("[THÔNG TIN] " + RoleLabel + " " + SafeServer(profile) + ": nhận diện " + info + "." + note);
+            AutoSaveDefaultProfile();
+            MessageBox.Show($"Đã nhận diện: {info}.{note}",
+                "Kiểm tra kết nối", MessageBoxButtons.OK,
+                detected != null ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
 
         private async Task TestConnectionAsync()
@@ -511,6 +637,16 @@ namespace SqlMigrator.UI.Components
             {
                 var profile = ReadProfile();
                 if (profile == null) return;
+                // Nhận diện engine trước: Tự động → thử tất cả (SQL trước);
+                // chọn tay engine cụ thể → chỉ probe engine đó.
+                var detected = await DetectEngineForTestAsync(profile);
+                if (detected != null && detected.Engine != DatabaseEngine.SqlServer)
+                {
+                    SetEngineSelection(detected.Engine);
+                    await ShowDetectedEngineAsync(profile, detected.Engine, detected);
+                    return;
+                }
+                // SQL Server (hoặc không nhận diện được) → luồng SQL như cũ.
                 if (ConnTester != null) await ConnTester(profile);
                 else await DatabaseCatalog.TestConnectionAsync(profile, _builder);
                 SetConnStatus("Kết nối thành công đến " + profile.Server + ".", true);
@@ -550,6 +686,15 @@ namespace SqlMigrator.UI.Components
             {
                 var profile = ReadProfile();
                 if (profile == null) return;
+                // Engine khác SQL Server: Pha 1 chưa liệt kê database cho engine khác.
+                if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer)
+                {
+                    var name = EngineChoices.DisplayOf(profile.Engine);
+                    SetConnStatus($"Đã chọn {name} — liệt kê database cho engine này ở pha sau.", true);
+                    Log("[THÔNG TIN] " + RoleLabel + " dùng engine " + name
+                        + " (Pha 1: mới nhận diện, chưa liệt kê database).");
+                    return;
+                }
                 var databases = DatabaseFetcher != null
                     ? await DatabaseFetcher(profile)
                     : await DatabaseCatalog.GetDatabasesAsync(profile, _builder);

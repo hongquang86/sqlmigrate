@@ -58,6 +58,19 @@ namespace SqlMigrator.Core.Services
 
             void Report(int percent, string message) => progress?.Report(new MigrationProgress(percent, message));
 
+            // Chốt chặn engine: Pha 1 chỉ cho SQL Server ↔ SQL Server.
+            var engineError = DbProviders.MigrationGuard.EnsureSupportedEngines(
+                _options.SourceEngine, _options.DestinationEngine);
+            if (engineError != null)
+            {
+                result.AddError(engineError);
+                _logger.LogError(engineError);
+                Report(0, "Lỗi: " + engineError);
+                sw.Stop();
+                result.Elapsed = sw.Elapsed;
+                return result;
+            }
+
             // Chốt chặn an toàn: nguồn và đích không được là cùng một database —
             // app chỉ di chuyển một chiều Nguồn → Đích, không bao giờ ghi lên nguồn.
             if (SqlConnectionFactory.IsSameDatabase(

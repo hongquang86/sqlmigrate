@@ -49,6 +49,15 @@ namespace SqlMigrator.Core.Security
         /// <summary>Có chấp nhận chứng chỉ server tự ký khi Encrypt hay không.</summary>
         public bool TrustServerCertificate { get; set; }
 
+        /// <summary>
+        /// Hệ CSDL ("SqlServer", "PostgreSql", "MySql", "Sqlite", "MongoDb").
+        /// Rỗng = tự động (profile cũ mặc định SQL Server để tương thích ngược).
+        /// </summary>
+        public string Engine { get; set; } = string.Empty;
+
+        /// <summary>Port (0 = port mặc định của engine).</summary>
+        public int Port { get; set; }
+
         /// <summary>Chuỗi hiển thị an toàn (không bao giờ chứa mật khẩu).</summary>
         public string SafeSummary =>
             $"Server={Server};Database={Database};Auth={Authentication};User={(string.IsNullOrWhiteSpace(UserName) ? "(Windows)" : UserName)}";

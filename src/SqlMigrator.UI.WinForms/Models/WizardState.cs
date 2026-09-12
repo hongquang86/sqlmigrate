@@ -121,6 +121,8 @@ namespace SqlMigrator.UI.Models
             {
                 SourceConnectionString = string.Empty, // được điền sau qua bộ dựng chuỗi kết nối an toàn
                 DestinationConnectionString = string.Empty,
+                SourceEngine = Source?.Engine ?? string.Empty,
+                DestinationEngine = Destination?.Engine ?? string.Empty,
                 Mode = Mode,
                 CreateDestinationDatabase = CreateDestinationDatabase,
                 DestinationDataFileDirectory = string.IsNullOrWhiteSpace(DestinationDataFileDirectory) ? null : DestinationDataFileDirectory.Trim(),

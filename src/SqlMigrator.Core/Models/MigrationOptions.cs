@@ -14,6 +14,15 @@ namespace SqlMigrator.Core.Models
         /// <summary>ADO.NET connection string to the destination SQL Server.</summary>
         public string DestinationConnectionString { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Hệ CSDL nguồn ("SqlServer", "PostgreSql", ...). Rỗng = SQL Server
+        /// (tương thích cấu hình cũ). Pha 1 chỉ chạy SQL Server ↔ SQL Server.
+        /// </summary>
+        public string SourceEngine { get; set; } = string.Empty;
+
+        /// <summary>Hệ CSDL đích (như trên).</summary>
+        public string DestinationEngine { get; set; } = string.Empty;
+
         /// <summary>The migration mode (full / schema_only / data_only).</summary>
         public MigrationMode Mode { get; set; } = MigrationMode.Full;
 

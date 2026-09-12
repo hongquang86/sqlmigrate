@@ -62,4 +62,24 @@ namespace SqlMigrator.Core.Models
         DatabasePermission,
         DatabaseOption
     }
+
+    /// <summary>
+    /// Hệ quản trị CSDL mà app nhận diện/hỗ trợ. MySql bao gồm MariaDB
+    /// (phân biệt qua chuỗi version, trường <c>EngineInfo.Variant</c>).
+    /// </summary>
+    public enum DatabaseEngine
+    {
+        /// <summary>Chưa xác định.</summary>
+        Unknown,
+        /// <summary>Microsoft SQL Server (đã hỗ trợ đầy đủ).</summary>
+        SqlServer,
+        /// <summary>PostgreSQL.</summary>
+        PostgreSql,
+        /// <summary>MySQL / MariaDB (chung protocol).</summary>
+        MySql,
+        /// <summary>SQLite (file).</summary>
+        Sqlite,
+        /// <summary>MongoDB (document).</summary>
+        MongoDb
+    }
 }

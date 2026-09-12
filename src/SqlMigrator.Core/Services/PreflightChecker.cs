@@ -34,6 +34,18 @@ namespace SqlMigrator.Core.Services
         {
             var result = new PreflightResult();
 
+            // Engine khác SQL Server: bản này mới nhận diện, chưa probe SQL để
+            // tránh lỗi khó hiểu — migrate sẽ chặn riêng ở orchestrator.
+            var srcEngine = EngineInfo.ParseEngine(_options.SourceEngine);
+            var dstEngine = EngineInfo.ParseEngine(_options.DestinationEngine);
+            if (srcEngine != DatabaseEngine.SqlServer || dstEngine != DatabaseEngine.SqlServer)
+            {
+                result.AddWarning(
+                    $"Cấu hình engine nguồn/đích ({DescribeEngine(srcEngine)} → {DescribeEngine(dstEngine)}): "
+                    + "bản này mới nhận diện, migrate/backup chưa hỗ trợ. Hãy chọn 2 đầu SQL Server.");
+                return result;
+            }
+
             var sourceDb = DatabaseNameOf(_options.SourceConnectionString);
             var destDb = DatabaseNameOf(_options.DestinationConnectionString);
 
@@ -103,6 +115,16 @@ namespace SqlMigrator.Core.Services
 
             return result;
         }
+
+        private static string DescribeEngine(DatabaseEngine engine) => engine switch
+        {
+            DatabaseEngine.SqlServer => "SQL Server",
+            DatabaseEngine.PostgreSql => "PostgreSQL",
+            DatabaseEngine.MySql => "MySQL/MariaDB",
+            DatabaseEngine.Sqlite => "SQLite",
+            DatabaseEngine.MongoDb => "MongoDB",
+            _ => "chưa xác định"
+        };
 
         private void ApplyKindWarnings(PreflightResult result)
         {
