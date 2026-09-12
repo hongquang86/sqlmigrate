@@ -126,6 +126,17 @@ public class StarExpanderTests
         Assert.Contains("phụ thuộc", DatabaseReconciler.DescribeMissingDependency(null));
     }
 
+    [Theory]
+    [InlineData("Ambiguous column name 'Active'.", "Active")]
+    [InlineData("AMBIGUOUS COLUMN NAME 'RoomID'.", "RoomID")]
+    [InlineData("Invalid object name 'dbo.T'.", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void TryExtractAmbiguousColumn_ParsesNameOrNull(string? message, string? expected)
+    {
+        Assert.Equal(expected, DatabaseReconciler.TryExtractAmbiguousColumn(message));
+    }
+
     [Fact]
     public void ExtractCrossDatabaseRefs_ThreePartForms_Detected()
     {

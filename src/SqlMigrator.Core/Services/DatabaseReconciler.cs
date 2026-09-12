@@ -718,6 +718,7 @@ namespace SqlMigrator.Core.Services
 
                     // Lỗi 209 (cột mơ hồ, thường do SELECT * lỗi thời): thử bung
                     // tường minh trước; thành công thì xong issue này ngay.
+                    // Thất bại (cột ghi tường minh) thì ghi gợi ý tay chính xác.
                     if (IsAmbiguousColumnError(ex))
                     {
                         var starFixed = await TryFixAmbiguousColumnsAsync(
@@ -732,6 +733,11 @@ namespace SqlMigrator.Core.Services
                                     : "");
                             continue;
                         }
+
+                        var hint = await BuildAmbiguousGuidanceAsync(
+                            issue, sqlError ?? ex.Message, ct).ConfigureAwait(false);
+                        if (!string.IsNullOrEmpty(hint))
+                            issue.SuggestedAction = hint;
                     }
 
                     // Bước 3: Nếu lỗi và có rewrite engine, thử rewrite.
@@ -779,7 +785,10 @@ namespace SqlMigrator.Core.Services
                                 issue.CanAutoFix = false;
                                 issue.SuggestedAction = "Có thể rewrite một phần. Script đã rewrite có trong RewrittenScript. "
                                     + "Cần fix thủ công cho các feature không hỗ trợ: "
-                                    + string.Join(", ", issue.UnsupportedRules);
+                                    + string.Join(", ", issue.UnsupportedRules)
+                                    + (issue.Warnings.Count > 0
+                                        ? " Lưu ý: " + string.Join(" ", issue.Warnings)
+                                        : "");
                             }
                             else
                             {
@@ -806,6 +815,15 @@ namespace SqlMigrator.Core.Services
                                     issue.ErrorMessage = (issue.ErrorMessage ?? "") + "\nSau rewrite: " + (sqlError2 ?? ex2.Message);
                                     issue.CanAutoFix = false;
                                     issue.SuggestedAction = "Script đã rewrite nhưng vẫn tạo thất bại. Cần fix thủ công.";
+                                    // Lỗi 209 mà không bung * được (cột ghi tường minh): gợi ý tay
+                                    // chính xác tới tên bảng nguồn có cột đó để user chỉ việc qualify.
+                                    if (IsAmbiguousColumnError(ex2))
+                                    {
+                                        var hint = await BuildAmbiguousGuidanceAsync(
+                                            issue, sqlError2 ?? ex2.Message, ct).ConfigureAwait(false);
+                                        if (!string.IsNullOrEmpty(hint))
+                                            issue.SuggestedAction = hint;
+                                    }
                                 }
                             }
                         }
@@ -1120,13 +1138,28 @@ namespace SqlMigrator.Core.Services
                 if (!issue.ObjectType.Equals("VIEW", StringComparison.OrdinalIgnoreCase)
                     && !issue.ObjectType.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase)
                     && !issue.ObjectType.Equals("STORED_PROCEDURE", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("Bỏ bung SELECT * cho '{Name}': loại {Type} không hỗ trợ.",
+                        issue.ObjectName, issue.ObjectType);
                     return false;
+                }
                 if (string.IsNullOrWhiteSpace(script) || script.IndexOf('*') < 0)
+                {
+                    // Nhánh phổ biến nhất: view ghi tường minh cột mơ hồ (không có * để bung).
+                    _logger.LogWarning(
+                        "Bỏ bung SELECT * cho '{Name}': script không chứa dấu * (cột ghi tường minh mà mơ hồ).",
+                        issue.ObjectName);
                     return false;
+                }
 
                 var aliases = StarExpander.ParseTableAliases(script);
                 if (aliases.Count == 0)
+                {
+                    _logger.LogWarning(
+                        "Bỏ bung SELECT * cho '{Name}': không tách được bảng/alias từ FROM/JOIN.",
+                        issue.ObjectName);
                     return false;
+                }
 
                 using var sourceConn = SqlConnectionFactory.Open(_options.SourceConnectionString,
                     _options.CommandTimeoutSeconds, ct);
@@ -1137,13 +1170,25 @@ namespace SqlMigrator.Core.Services
                     var cols = await ReadTableColumnsAsync(sourceConn, table, ct).ConfigureAwait(false);
                     if (cols.Count > 0)
                         aliasColumns.Add((alias, cols));
+                    else
+                        _logger.LogWarning(
+                            "Bỏ bảng '{Table}' khi bung SELECT * cho '{Name}': không đọc được cột từ nguồn.",
+                            table, issue.ObjectName);
                 }
                 if (aliasColumns.Count == 0)
+                {
+                    _logger.LogWarning("Bỏ bung SELECT * cho '{Name}': không bảng nào đọc được cột.",
+                        issue.ObjectName);
                     return false;
+                }
 
                 var (changed, expanded) = StarExpander.ExpandStars(script, aliasColumns);
                 if (!changed)
+                {
+                    _logger.LogWarning("Bỏ bung SELECT * cho '{Name}': không tìm thấy mẫu alias.*/* trần.",
+                        issue.ObjectName);
                     return false;
+                }
 
                 await TryCreateOnDestAsync(destConn, expanded, ct).ConfigureAwait(false);
 
@@ -1164,6 +1209,65 @@ namespace SqlMigrator.Core.Services
                 _logger.LogWarning("Không bung được SELECT * cho '{Name}' ({Message}).",
                     issue.ObjectName, ex.Message);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Trích tên cột từ thông điệp "Ambiguous column name 'X'". Trả null nếu không khớp.
+        /// Thuần chuỗi để dễ kiểm thử.
+        /// </summary>
+        internal static string? TryExtractAmbiguousColumn(string? errorMessage)
+        {
+            if (string.IsNullOrWhiteSpace(errorMessage))
+                return null;
+            var m = Regex.Match(errorMessage, @"Ambiguous column name '([^']+)'",
+                RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value.Trim().Trim('[', ']') : null;
+        }
+
+        /// <summary>
+        /// Dựng gợi ý sửa tay cho lỗi 209 không bung * được: liệt kê các bảng NGUỒN
+        /// có cột đó (tối đa 10, chỉ SELECT catalog) để user biết qualify bảng nào.
+        /// Trả null khi không xác định được tên cột. Không ném lỗi.
+        /// </summary>
+        private async Task<string?> BuildAmbiguousGuidanceAsync(
+            ReconcileIssue issue, string errorMessage, CancellationToken ct)
+        {
+            try
+            {
+                var column = TryExtractAmbiguousColumn(errorMessage);
+                if (string.IsNullOrEmpty(column))
+                    return null;
+
+                var tables = new List<string>();
+                using var sourceConn = SqlConnectionFactory.Open(_options.SourceConnectionString,
+                    _options.CommandTimeoutSeconds, ct);
+                using var cmd = new SqlCommand(
+                    "SELECT TOP 10 s.name + '.' + t.name FROM sys.columns c "
+                    + "JOIN sys.tables t ON t.object_id = c.object_id "
+                    + "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                    + "WHERE c.name = @col AND t.is_ms_shipped = 0 ORDER BY 1;", sourceConn)
+                { CommandTimeout = 60 };
+                cmd.Parameters.AddWithValue("@col", column);
+                using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    tables.Add(reader.GetString(0));
+
+                var where = tables.Count > 0
+                    ? " Các bảng nguồn có cột này: " + string.Join(", ", tables) + "."
+                    : "";
+                var hint = "Cột '" + column + "' mơ hồ (nhiều bảng JOIN cùng tên cột) mà view không dùng "
+                    + "SELECT * nên app không tự bung được. Hãy sửa tay định nghĩa view: ghi rõ "
+                    + "[alias].[" + column + "] (VD: SELECT a.[" + column + "] ...)." + where;
+                AddIssueWarning(issue, hint);
+                _logger.LogWarning("'{Name}': {Hint}", issue.ObjectName, hint);
+                return hint;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Không dựng được gợi ý 209 cho '{Name}' ({Message}).",
+                    issue.ObjectName, ex.Message);
+                return null;
             }
         }
 
