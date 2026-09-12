@@ -266,10 +266,14 @@ namespace SqlMigrator.Core.Services
                     break;
                 var endKey = keys[keys.Count - 1];
 
-                var dataSql = TransferChunker.BuildChunkDataSql(plan, lo, endKey, out var dataParams);
-                var srcByKey = await ReadRowsByKeyAsync(source, dataSql, dataParams, plan, keyIdx, ct)
+                var dataSql = TransferChunker.BuildChunkDataSql(plan, lo, endKey, out var srcDataParams);
+                var srcByKey = await ReadRowsByKeyAsync(source, dataSql, srcDataParams, plan, keyIdx, ct)
                     .ConfigureAwait(false);
-                var destRows = await ReadRowsListAsync(dest, dataSql, dataParams, plan, keyIdx, ct)
+                // Dựng mảng SqlParameter RIÊNG cho lệnh đích: một SqlParameter chỉ thuộc
+                // được một SqlParameterCollection, dùng chung sẽ ném
+                // "already contained by another SqlParameterCollection".
+                var destDataSql = TransferChunker.BuildChunkDataSql(plan, lo, endKey, out var destDataParams);
+                var destRows = await ReadRowsListAsync(dest, destDataSql, destDataParams, plan, keyIdx, ct)
                     .ConfigureAwait(false);
 
                 counts.SourceRows += srcByKey.Count;

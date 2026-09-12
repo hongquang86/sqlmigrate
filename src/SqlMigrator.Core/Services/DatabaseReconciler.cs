@@ -728,7 +728,7 @@ namespace SqlMigrator.Core.Services
                     if (IsAmbiguousColumnError(ex))
                     {
                         var starFixed = await TryFixAmbiguousColumnsAsync(
-                            destConn, issue, issue.SourceScript!, ct).ConfigureAwait(false);
+                            destConn, issue, issue.SourceScript!, ct, sqlError ?? ex.Message).ConfigureAwait(false);
                         if (starFixed)
                         {
                             issue.CreateSucceeded = true;
@@ -1145,7 +1145,7 @@ namespace SqlMigrator.Core.Services
             {
                 // Lỗi 209 (cột mơ hồ, thường do SELECT * lỗi thời): thử bung tường minh.
                 // Không bung được thì ném lại lỗi gốc để vòng ngoài ghi nhận thất bại.
-                if (!await TryFixAmbiguousColumnsAsync(conn, issue, script, ct).ConfigureAwait(false))
+                if (!await TryFixAmbiguousColumnsAsync(conn, issue, script, ct, ex.Message).ConfigureAwait(false))
                     throw;
             }
 
@@ -1176,10 +1176,13 @@ namespace SqlMigrator.Core.Services
         /// <summary>
         /// Thử sửa lỗi 209 cho view/function: bung SELECT * thành danh sách cột
         /// tường minh đọc từ catalog NGUỒN (chỉ SELECT), rồi tạo lại trên đích.
-        /// Trả true nếu tạo thành công; false (không ném) trong mọi trường hợp còn lại.
+        /// Hết cách bung mà vẫn 209 (cột ghi tường minh) thì thử qualify từng khả
+        /// năng và đối chiếu output ngay trên nguồn. Trả true nếu tạo thành công;
+        /// false (không ném) trong mọi trường hợp còn lại.
         /// </summary>
         private async Task<bool> TryFixAmbiguousColumnsAsync(
-            SqlConnection destConn, ReconcileIssue issue, string script, CancellationToken ct)
+            SqlConnection destConn, ReconcileIssue issue, string script,
+            CancellationToken ct, string? errorMessage = null)
         {
             try
             {
@@ -1187,10 +1190,37 @@ namespace SqlMigrator.Core.Services
                     && !issue.ObjectType.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase)
                     && !issue.ObjectType.Equals("STORED_PROCEDURE", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogDebug("Bỏ bung SELECT * cho '{Name}': loại {Type} không hỗ trợ.",
+                    _logger.LogDebug("Bỏ sửa 209 cho '{Name}': loại {Type} không hỗ trợ.",
                         issue.ObjectName, issue.ObjectType);
                     return false;
                 }
+
+                // Cách 1 (rẻ): bung SELECT * thành cột tường minh theo catalog nguồn.
+                if (await TryStarExpandAsync(destConn, issue, script, ct).ConfigureAwait(false))
+                    return true;
+
+                // Cách 2 (cột ghi tường minh): qualify thử từng khả năng rồi đối chiếu
+                // output ngay trên nguồn (chỉ SELECT) để chọn đúng duy nhất.
+                return await TryResolveAmbiguousAsync(destConn, issue, script,
+                    errorMessage ?? issue.ErrorMessage, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Không sửa được 209 cho '{Name}' ({Message}).",
+                    issue.ObjectName, ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Cách 1: bung SELECT * / alias.* theo đúng cột đọc từ nguồn rồi tạo lại.
+        /// Trả false (không ném) khi không áp dụng được hoặc tạo lại vẫn lỗi.
+        /// </summary>
+        private async Task<bool> TryStarExpandAsync(
+            SqlConnection destConn, ReconcileIssue issue, string script, CancellationToken ct)
+        {
+            try
+            {
                 if (string.IsNullOrWhiteSpace(script) || script.IndexOf('*') < 0)
                 {
                     // Nhánh phổ biến nhất: view ghi tường minh cột mơ hồ (không có * để bung).
@@ -1258,6 +1288,170 @@ namespace SqlMigrator.Core.Services
                     issue.ObjectName, ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Cách 2: với cột mơ hồ ghi tường minh, qualify thử từng alias mà bảng của
+        /// nó có cột đó, rồi đối chiếu checksum output ngay trên NGUỒN (chỉ SELECT).
+        /// Chỉ chọn khi ĐÚNG MỘT khả năng khớp (kèm gate xác định 2 lần baseline);
+        /// 0 hoặc nhiều khả năng khớp đều bỏ (để user sửa tay). Không bao giờ ghi nguồn.
+        /// </summary>
+        private async Task<bool> TryResolveAmbiguousAsync(
+            SqlConnection destConn, ReconcileIssue issue, string script,
+            string? errorMessage, CancellationToken ct)
+        {
+            const int MaxCandidates = 6;
+            try
+            {
+                var column = TryExtractAmbiguousColumn(errorMessage);
+                if (string.IsNullOrEmpty(column))
+                {
+                    _logger.LogWarning("Bỏ đối chiếu 209 cho '{Name}': không trích được tên cột.",
+                        issue.ObjectName);
+                    return false;
+                }
+
+                var body = AmbiguousColumnResolver.ExtractViewBody(script);
+                if (string.IsNullOrEmpty(body))
+                {
+                    _logger.LogWarning("Bỏ đối chiếu 209 cho '{Name}': không tách được query SELECT.",
+                        issue.ObjectName);
+                    return false;
+                }
+
+                if (AmbiguousColumnResolver.FindBareOccurrences(body, column).Count == 0)
+                {
+                    _logger.LogWarning("Bỏ đối chiếu 209 cho '{Name}': không thấy '{Col}' dạng trần.",
+                        issue.ObjectName, column);
+                    return false;
+                }
+
+                var aliases = StarExpander.ParseTableAliases(script);
+                if (aliases.Count == 0)
+                    return false;
+
+                using var sourceConn = SqlConnectionFactory.Open(_options.SourceConnectionString,
+                    _options.CommandTimeoutSeconds, ct);
+
+                // Bảng nào (trong các alias) có cột đó — một truy vấn duy nhất.
+                var tablesWithColumn = await ReadTablesHavingColumnAsync(
+                    sourceConn, column, ct).ConfigureAwait(false);
+                var candidates = aliases
+                    .Select(a => new
+                    {
+                        Alias = a.Alias,
+                        Table = StarExpander.NormalizeTableRef(a.Table)
+                    })
+                    .Where(a => tablesWithColumn.Contains(
+                        StarExpander.NormalizeTableRef(a.Table)))
+                    .Select(a => a.Alias)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (candidates.Count == 0)
+                {
+                    _logger.LogWarning("Bỏ đối chiếu 209 cho '{Name}': không alias nào có cột '{Col}'.",
+                        issue.ObjectName, column);
+                    return false;
+                }
+                if (candidates.Count > MaxCandidates)
+                {
+                    _logger.LogWarning("Bỏ đối chiếu 209 cho '{Name}': quá nhiều khả năng ({N}).",
+                        issue.ObjectName, candidates.Count);
+                    return false;
+                }
+
+                // Gate xác định: chạy gốc 2 lần phải giống nhau (chống dữ liệu đang đổi
+                // và output rỗng — rỗng thì khả năng nào cũng khớp nên không dám chọn).
+                var base1 = await ChecksumQueryAsync(sourceConn, body, ct).ConfigureAwait(false);
+                var base2 = await ChecksumQueryAsync(sourceConn, body, ct).ConfigureAwait(false);
+                if (base1 == null || base1 != base2)
+                {
+                    _logger.LogWarning(
+                        "Bỏ đối chiếu 209 cho '{Name}': output gốc rỗng hoặc đang đổi nên không đối chiếu được.",
+                        issue.ObjectName);
+                    return false;
+                }
+
+                var matches = new List<string>();
+                foreach (var alias in candidates)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var variant = AmbiguousColumnResolver.QualifyOccurrences(body, column, alias);
+                    var cs = await ChecksumQueryAsync(sourceConn, variant, ct).ConfigureAwait(false);
+                    if (cs != null && cs == base1)
+                        matches.Add(alias);
+                }
+
+                if (matches.Count != 1)
+                {
+                    _logger.LogWarning(
+                        "Bỏ đối chiếu 209 cho '{Name}': {N} khả năng khớp ({Aliases}) — không dám chọn, để user quyết.",
+                        issue.ObjectName, matches.Count, string.Join(", ", matches));
+                    return false;
+                }
+
+                var winner = matches[0];
+                var finalScript = AmbiguousColumnResolver.QualifyOccurrences(script, column, winner);
+                await TryCreateOnDestAsync(destConn, finalScript, ct).ConfigureAwait(false);
+
+                issue.RewrittenScript = finalScript;
+                var applied = issue.AppliedRules.ToList();
+                if (!applied.Contains("ambiguous_resolve"))
+                    applied.Add("ambiguous_resolve");
+                issue.AppliedRules = applied;
+                AddIssueWarning(issue,
+                    "Cột '" + column + "' mơ hồ đã được qualify thành [" + winner.Trim('[', ']')
+                    + "].[" + column + "] sau khi đối chiếu output trên nguồn "
+                    + "(đã thử " + candidates.Count + " khả năng, chỉ khả năng này khớp).");
+                _logger.LogInformation("✔ '{Name}' tạo thành công sau khi qualify '{Col}' bằng '{Alias}'.",
+                    issue.ObjectName, column, winner);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Không đối chiếu được 209 cho '{Name}' ({Message}).",
+                    issue.ObjectName, ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checksum toàn bộ output một query SELECT trên nguồn (chỉ SELECT).
+        /// Trả null khi rỗng hoặc lỗi. Thứ tự dòng không ảnh hưởng (aggregate).
+        /// </summary>
+        private static async Task<int?> ChecksumQueryAsync(
+            SqlConnection sourceConn, string queryBody, CancellationToken ct)
+        {
+            using var cmd = new SqlCommand(
+                "SELECT CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM (" + queryBody + ") AS [__v];",
+                sourceConn)
+            { CommandTimeout = 120 };
+            var value = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return value == null || value == DBNull.Value ? (int?)null : Convert.ToInt32(value);
+        }
+
+        /// <summary>
+        /// Tập "schema.table" (bảng + view người dùng) trên nguồn có cột tên cho trước.
+        /// Một truy vấn duy nhất, chỉ SELECT.
+        /// </summary>
+        private static async Task<HashSet<string>> ReadTablesHavingColumnAsync(
+            SqlConnection sourceConn, string column, CancellationToken ct)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var cmd = new SqlCommand(
+                "SELECT s.name + '.' + o.name FROM sys.columns c "
+                + "JOIN sys.objects o ON o.object_id = c.object_id "
+                + "JOIN sys.schemas s ON s.schema_id = o.schema_id "
+                + "LEFT JOIN sys.tables t ON t.object_id = o.object_id "
+                + "LEFT JOIN sys.views v ON v.object_id = o.object_id "
+                + "WHERE c.name = @col AND o.type IN ('U','V') "
+                + "AND COALESCE(t.is_ms_shipped, v.is_ms_shipped, 0) = 0;", sourceConn)
+            { CommandTimeout = 60 };
+            cmd.Parameters.AddWithValue("@col", column);
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                set.Add(reader.GetString(0));
+            return set;
         }
 
         /// <summary>
