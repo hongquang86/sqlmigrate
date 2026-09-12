@@ -307,7 +307,7 @@ namespace SqlMigrator.UI.Components
 
                 SetConnStatus("Đã tạo database đích '" + dbName + "'.", true);
                 Log("[THÔNG TIN] " + RoleLabel + ": đã tạo database đích '" + dbName + "'.");
-                await LoadDatabasesAsync();
+                await LoadDatabasesAsync(preserveSelection: true);
             }
             catch (Exception ex)
             {
@@ -543,7 +543,7 @@ namespace SqlMigrator.UI.Components
             Log("[LỖI] " + RoleLabel + " kết nối thất bại: " + message + hint);
         }
 
-        private async Task LoadDatabasesAsync()
+        private async Task LoadDatabasesAsync(bool preserveSelection = false)
         {
             _btnLoadDatabases.Enabled = false;
             try
@@ -559,9 +559,10 @@ namespace SqlMigrator.UI.Components
                 _cmbDatabase.Items.Add(DbPlaceholder);
                 foreach (var d in databases) _cmbDatabase.Items.Add(d);
 
-                // Không tự chọn DB đầu tiên: giữ lựa chọn cũ nếu vẫn còn, ngược lại để
-                // mục trắng để người dùng chủ động chọn — tránh nhầm DB nguồn/đích.
-                if (databases.Contains(previous)) _cmbDatabase.Text = previous;
+                // Mặc định KHÔNG tự chọn DB nào sau khi nạp: luôn để mục trắng để
+                // người dùng chủ động chọn — tránh nhầm DB nguồn/đích.
+                // Riêng luồng Tạo DB vừa gõ tên xong thì giữ lại tên đó (preserveSelection).
+                if (preserveSelection && databases.Contains(previous)) _cmbDatabase.Text = previous;
                 else _cmbDatabase.Text = DbPlaceholder;
 
                 SetConnStatus("Đã kết nối " + SafeServer(profile) + " — thấy " + databases.Count + " database. Chọn database để tiếp tục.", true);
