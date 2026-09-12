@@ -19,6 +19,7 @@ static class Program
         services.AddSingleton<IDataProtector, DpapiDataProtector>();
         services.AddSingleton<IConnectionProfileStore, ConnectionProfileStore>();
         services.AddSingleton<SecureConnectionStringBuilder>();
+        services.AddSingleton<MigrateTabPage>();
         services.AddSingleton<MainForm>();
 
         using var provider = services.BuildServiceProvider();
