@@ -56,6 +56,11 @@ namespace SqlMigrator.Core.Services
                 .Where(t => !t.IsSkipped && !t.IsExternal)
                 .ToList();
 
+            // Danh sách bỏ qua đã chấp nhận (local, theo cặp nguồn→đích).
+            var ignored = await new IgnoreListStore(_logger).LoadAsync(
+                _options.SourceConnectionString, _options.DestinationConnectionString, ct)
+                .ConfigureAwait(false);
+
             for (var i = 0; i < copyable.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -63,6 +68,20 @@ namespace SqlMigrator.Core.Services
                 progress?.Report(new MigrationProgress(
                     10 + (int)(i * 80.0 / Math.Max(1, copyable.Count)),
                     string.Format("Đang kiểm tra toàn vẹn bảng {0}/{1}...", i + 1, copyable.Count)));
+
+                // Bảng user chấp nhận bỏ qua: tính là đạt, ghi rõ lý do.
+                if (IgnoreMatcher.IsIgnored(ignored, "TABLE", table.PlainName))
+                {
+                    var skipped = new TableVerificationResult
+                    {
+                        PlainName = table.PlainName,
+                        Status = VerificationStatus.Skipped,
+                        Message = "User đã chấp nhận bỏ qua — coi như khớp."
+                    };
+                    results.Add(skipped);
+                    LogVerificationResult(skipped);
+                    continue;
+                }
 
                 TableVerificationResult r;
                 try
@@ -100,6 +119,26 @@ namespace SqlMigrator.Core.Services
         {
             var source = await CountObjectsAsync(_options.SourceConnectionString, ct).ConfigureAwait(false);
             var dest = await CountObjectsAsync(_options.DestinationConnectionString, ct).ConfigureAwait(false);
+
+            // Loại các đối tượng user chấp nhận bỏ qua khỏi phía nguồn trước khi so
+            // để đích được coi là khớp ở các mục đó.
+            var ignored = await new IgnoreListStore(_logger).LoadAsync(
+                _options.SourceConnectionString, _options.DestinationConnectionString, ct)
+                .ConfigureAwait(false);
+            var hidden = 0;
+            if (ignored.Count > 0)
+            {
+                foreach (var type in source.Keys.ToList())
+                {
+                    var before = source[type].Count;
+                    source[type].RemoveWhere(obj => IgnoreMatcher.IsIgnored(ignored, type, obj));
+                    hidden += before - source[type].Count;
+                }
+                if (hidden > 0)
+                    _logger.LogInformation(
+                        "Đối chiếu cấu trúc: đã ẩn {Hidden} đối tượng user chấp nhận bỏ qua.",
+                        hidden);
+            }
 
             var missing = new List<string>();
             foreach (var type in source.Keys)

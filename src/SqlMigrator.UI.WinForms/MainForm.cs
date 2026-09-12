@@ -1188,11 +1188,14 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 _txtLog.Clear();
 
                 var result = await context.Orchestrator.MigrateAsync(_cts.Token, progress);
-                ShowSummary(result);
+
+                // Danh sách bỏ qua đã chấp nhận (local) để đối chiếu không báo lại.
+                var ignored = await LoadIgnoredAsync(options);
+                ShowSummary(result, ignored);
 
                 // Đối chiếu đích vs nguồn vào nhật ký real-time ngay sau migrate.
                 foreach (var line in InventoryComparer.FormatComparison(
-                    result.SourceInventory!, result.DestinationInventory!))
+                    result.SourceInventory!, result.DestinationInventory!, ignored))
                     AppendLog(line);
 
                 // Sau đợt chạy thành công, baseline đã được lưu → cập nhật tình trạng nút Update.
@@ -1340,7 +1343,8 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 }
 
                 // Hiển thị báo cáo và để user chọn.
-                var selectedIssues = ShowReconcileReportAndSelect(scanResult);
+                var selectedIssues = ShowReconcileReportAndSelect(
+                    scanResult, options.SourceConnectionString, options.DestinationConnectionString);
                 if (selectedIssues == null || selectedIssues.Count == 0)
                 {
                     _lblStatus.Text = "Không chọn vấn đề nào — bỏ qua.";
@@ -1391,7 +1395,8 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
         }
 
         /// <summary>Hiển thị báo cáo quét và để user chọn vấn đề muốn xử lý. Trả về danh sách được chọn.</summary>
-        private List<ReconcileIssue>? ShowReconcileReportAndSelect(ReconcileResult result)
+        private List<ReconcileIssue>? ShowReconcileReportAndSelect(
+            ReconcileResult result, string srcCs, string destCs)
         {
             // Tạo form hiển thị báo cáo chi tiết (using để luôn giải phóng handle
             // dù user bấm Xử lý, Bỏ qua hay tắt form).
@@ -1516,9 +1521,82 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 grid.EndEdit();
                 btnCheckAll.Text = allChecked ? "Chọn tất cả" : "Bỏ chọn tất cả";
             };
+            var btnIgnoreSelected = new Button { Text = "Bỏ qua vĩnh viễn", Width = 130 };
+            var btnManageIgnored = new Button { Text = "Đã bỏ qua (0)", Width = 110 };
+            btnIgnoreSelected.Click += (_, _) =>
+            {
+                try
+                {
+                    var checkedIssues = new List<ReconcileIssue>();
+                    foreach (DataGridViewRow row in grid.Rows)
+                    {
+                        if (row.Tag is ReconcileIssue issue
+                            && row.Cells["Select"] is DataGridViewCheckBoxCell cell
+                            && cell.Value is bool isChecked && isChecked)
+                            checkedIssues.Add(issue);
+                    }
+                    if (checkedIssues.Count == 0)
+                    {
+                        MessageBox.Show("Hãy tick chọn ít nhất một mục trước khi bỏ qua vĩnh viễn.",
+                            "Bỏ qua vĩnh viễn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+
+                    var store = new IgnoreListStore(new UiLogger(AppendLog, "Migrator"));
+                    var entries = new List<SqlMigrator.Core.Models.IgnoredObject>();
+                    foreach (var issue in checkedIssues)
+                    {
+                        var (schema, name) = SplitObjectName(issue.ObjectName);
+                        entries.Add(new SqlMigrator.Core.Models.IgnoredObject
+                        {
+                            ObjectType = issue.ObjectType,
+                            Schema = schema,
+                            Name = name,
+                            Reason = issue.SuggestedAction.Length > 200
+                                ? issue.SuggestedAction.Substring(0, 200)
+                                : issue.SuggestedAction
+                        });
+                    }
+                    var added = store.AddAsync(srcCs, destCs, entries)
+                        .GetAwaiter().GetResult();
+                    AppendLog($"[THÔNG TIN] Đã chấp nhận bỏ qua vĩnh viễn {added} mục "
+                        + "(lần quét/verify sau không báo lại).");
+
+                    // Bỏ tick + làm mờ các dòng vừa cho qua, modal vẫn mở để chọn tiếp.
+                    foreach (DataGridViewRow row in grid.Rows)
+                    {
+                        if (row.Tag is ReconcileIssue issue && checkedIssues.Contains(issue)
+                            && row.Cells["Select"] is DataGridViewCheckBoxCell cell)
+                        {
+                            cell.Value = false;
+                            row.DefaultCellStyle.ForeColor = Color.Gray;
+                        }
+                    }
+                    grid.EndEdit();
+                    btnManageIgnored.Text = $"Đã bỏ qua ({CountIgnored(store, srcCs, destCs)})";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Không lưu được danh sách bỏ qua: " + ex.Message,
+                        "Bỏ qua vĩnh viễn", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            btnManageIgnored.Click += (_, _) => ShowIgnoreManagerDialog(srcCs, destCs, btnManageIgnored, grid);
             btnPanel.Controls.Add(btnFixSelected);
             btnPanel.Controls.Add(btnCheckAll);
+            btnPanel.Controls.Add(btnIgnoreSelected);
+            btnPanel.Controls.Add(btnManageIgnored);
             btnPanel.Controls.Add(btnCancel);
+
+            try
+            {
+                var existing = new IgnoreListStore(new UiLogger(AppendLog, "Migrator"))
+                    .LoadAsync(srcCs, destCs).GetAwaiter().GetResult().Count;
+                btnManageIgnored.Text = $"Đã bỏ qua ({existing})";
+            }
+            catch
+            {
+            }
 
             reportForm.Controls.Add(grid);
             reportForm.Controls.Add(summaryLabel);
@@ -1562,6 +1640,124 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             }
 
             return selected;
+        }
+
+        /// <summary>Tách "schema.name" (hậu tố sau dấu chấm cuối) cho danh sách bỏ qua.</summary>
+        private static (string Schema, string Name) SplitObjectName(string objectName)
+        {
+            if (string.IsNullOrWhiteSpace(objectName))
+                return ("", "");
+            var text = objectName.Trim();
+            var dot = text.LastIndexOf('.');
+            if (dot <= 0)
+                return ("", text.Trim('[', ']'));
+            return (text.Substring(0, dot).Trim('[', ']', ' '), text.Substring(dot + 1).Trim('[', ']', ' '));
+        }
+
+        /// <summary>Đếm mục đã bỏ qua (đồng bộ vì chỉ đọc file local nhỏ).</summary>
+        private int CountIgnored(IgnoreListStore store, string srcCs, string destCs)
+        {
+            try
+            {
+                return store.LoadAsync(srcCs, destCs).GetAwaiter().GetResult().Count;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>Hộp quản lý mục đã bỏ qua: xem, xóa từng mục, xóa tất cả.</summary>
+        private void ShowIgnoreManagerDialog(
+            string srcCs, string destCs, Button counterButton, DataGridView grid)
+        {
+            var store = new IgnoreListStore(new UiLogger(AppendLog, "Migrator"));
+            List<SqlMigrator.Core.Models.IgnoredObject> items;
+            try
+            {
+                items = store.LoadAsync(srcCs, destCs).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Không đọc được danh sách bỏ qua: " + ex.Message,
+                    "Mục đã bỏ qua", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            using var form = new Form
+            {
+                Text = "Mục đã chấp nhận bỏ qua (không báo lại khi quét/verify)",
+                Size = new Size(560, 380),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false
+            };
+
+            var list = new ListBox { Dock = DockStyle.Fill };
+            void RefreshList()
+            {
+                list.Items.Clear();
+                foreach (var e in items)
+                    list.Items.Add($"{e.ObjectType} {e.DisplayName} (bỏ qua {e.IgnoredAtUtc:dd/MM/yyyy})");
+            }
+            RefreshList();
+
+            var btnPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 40,
+                FlowDirection = FlowDirection.RightToLeft
+            };
+            var btnClose = new Button { Text = "Đóng", DialogResult = DialogResult.OK, Width = 80 };
+            var btnClearAll = new Button { Text = "Xóa tất cả", Width = 100 };
+            var btnDelete = new Button { Text = "Xóa mục chọn", Width = 110 };
+            btnDelete.Click += (_, _) =>
+            {
+                if (list.SelectedIndex < 0 || list.SelectedIndex >= items.Count)
+                    return;
+                var e = items[list.SelectedIndex];
+                try
+                {
+                    store.RemoveAsync(srcCs, destCs, e.ObjectType, e.Schema, e.Name)
+                        .GetAwaiter().GetResult();
+                    items.RemoveAt(list.SelectedIndex);
+                    RefreshList();
+                    AppendLog($"[THÔNG TIN] Đã gỡ bỏ qua: {e.DisplayName} (lần quét sau sẽ báo lại).");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Không xóa được: " + ex.Message,
+                        "Mục đã bỏ qua", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            btnClearAll.Click += (_, _) =>
+            {
+                if (MessageBox.Show("Xóa toàn bộ danh sách bỏ qua? Lần quét sau sẽ báo lại tất cả.",
+                    "Mục đã bỏ qua", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                    return;
+                try
+                {
+                    store.ClearAsync(srcCs, destCs).GetAwaiter().GetResult();
+                    items.Clear();
+                    RefreshList();
+                    AppendLog("[THÔNG TIN] Đã xóa toàn bộ danh sách bỏ qua.");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Không xóa được: " + ex.Message,
+                        "Mục đã bỏ qua", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            btnPanel.Controls.Add(btnClose);
+            btnPanel.Controls.Add(btnClearAll);
+            btnPanel.Controls.Add(btnDelete);
+
+            form.Controls.Add(list);
+            form.Controls.Add(btnPanel);
+            form.AcceptButton = btnClose;
+            form.ShowDialog(this);
+
+            counterButton.Text = $"Đã bỏ qua ({items.Count})";
         }
 
         private void ShowReconcileReport(ReconcileResult result)
@@ -2046,7 +2242,22 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             _txtLog.ScrollToCaret();
         }
 
-        private void ShowSummary(MigrationResult result)
+        /// <summary>Tải danh sách đã chấp nhận bỏ qua (rỗng nếu chưa có).</summary>
+        private async Task<List<SqlMigrator.Core.Models.IgnoredObject>> LoadIgnoredAsync(MigrationOptions options)
+        {
+            try
+            {
+                var store = new IgnoreListStore(new UiLogger(AppendLog, "Migrator"));
+                return await store.LoadAsync(
+                    options.SourceConnectionString, options.DestinationConnectionString);
+            }
+            catch
+            {
+                return new List<SqlMigrator.Core.Models.IgnoredObject>();
+            }
+        }
+
+        private void ShowSummary(MigrationResult result, IReadOnlyList<SqlMigrator.Core.Models.IgnoredObject>? ignored = null)
         {
             if (IsDisposed) return;
 
@@ -2075,8 +2286,12 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             {
                 lines.Add("— Đối chiếu đích vs nguồn (chi tiết trong nhật ký) —");
                 foreach (var d in InventoryComparer.Compare(result.SourceInventory, result.DestinationInventory))
-                    lines.Add($"  {(d.Matches ? "✔" : "✘")} {d.Label}: nguồn {d.SourceCount:N0} → đích {d.DestCount:N0}"
-                        + (d.Matches ? "" : $" (thiếu {d.MissingNames.Count:N0})"));
+                {
+                    var missing = InventoryComparer.FilterMissing(d.MissingNames, d.Label, ignored);
+                    var matches = missing.Count == 0;
+                    lines.Add($"  {(matches ? "✔" : "✘")} {d.Label}: nguồn {d.SourceCount:N0} → đích {d.DestCount:N0}"
+                        + (matches ? "" : $" (thiếu {missing.Count:N0})"));
+                }
             }
             lines.Add("Cảnh báo: " + result.Warnings.Count);
             if (result.Errors.Count > 0)

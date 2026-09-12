@@ -133,6 +133,17 @@ namespace SqlMigrator.Core.Services
         public static IReadOnlyList<string> FormatComparison(
             DatabaseInventory source, DatabaseInventory dest, int maxMissingNames = 10)
         {
+            return FormatComparison(source, dest, (ISet<string>?)null, maxMissingNames);
+        }
+
+        /// <summary>
+        /// Các dòng đối chiếu, loại các mục user chấp nhận bỏ qua (ghi rõ số mục ẩn).
+        /// ignoredKeys: khóa chuẩn "LOẠI:schema.name" (xem IgnoreMatcher).
+        /// </summary>
+        public static IReadOnlyList<string> FormatComparison(
+            DatabaseInventory source, DatabaseInventory dest,
+            ISet<string>? ignoredKeys, int maxMissingNames = 10)
+        {
             var lines = new List<string> { "— ĐỐI CHIẾU ĐÍCH vs NGUỒN —" };
             if (source == null || !source.Ok || dest == null || !dest.Ok)
             {
@@ -140,27 +151,93 @@ namespace SqlMigrator.Core.Services
                 return lines;
             }
 
+            var hidden = 0;
             var allMatch = true;
             foreach (var d in Compare(source, dest))
             {
-                if (d.Matches)
+                var missing = d.MissingNames;
+                if (ignoredKeys != null && ignoredKeys.Count > 0 && missing.Count > 0)
+                {
+                    var kept = missing
+                        .Where(n => !ignoredKeys.Contains(d.Label + ":" + n)
+                            && !ignoredKeys.Contains(IgnoreKindOf(d.Label) + ":" + n))
+                        .ToList();
+                    hidden += missing.Count - kept.Count;
+                    missing = kept;
+                }
+
+                if (missing.Count == 0)
                 {
                     lines.Add($"  ✔ {d.Label}: nguồn {d.SourceCount:N0} → đích {d.DestCount:N0} (đủ).");
                     continue;
                 }
 
                 allMatch = false;
-                lines.Add($"  ✘ {d.Label}: nguồn {d.SourceCount:N0} → đích {d.DestCount:N0} (thiếu {d.MissingNames.Count:N0}).");
-                foreach (var name in d.MissingNames.Take(maxMissingNames))
+                lines.Add($"  ✘ {d.Label}: nguồn {d.SourceCount:N0} → đích {d.DestCount:N0} (thiếu {missing.Count:N0}).");
+                foreach (var name in missing.Take(maxMissingNames))
                     lines.Add("      - thiếu: " + name);
-                if (d.MissingNames.Count > maxMissingNames)
-                    lines.Add($"      ... và {d.MissingNames.Count - maxMissingNames:N0} mục nữa.");
+                if (missing.Count > maxMissingNames)
+                    lines.Add($"      ... và {missing.Count - maxMissingNames:N0} mục nữa.");
             }
 
+            if (hidden > 0)
+                lines.Add($"  (Đã ẩn {hidden:N0} mục user chấp nhận bỏ qua.)");
             lines.Add(allMatch
                 ? "Kết luận: đích KHỚP 100% nguồn về mặt đối tượng."
                 : "Kết luận: đích CHƯA khớp nguồn — bấm 'Đồng bộ 100%' để xử lý phần thiếu.");
             return lines;
+        }
+
+        /// <summary>
+        /// Các dòng đối chiếu, loại các mục user chấp nhận bỏ qua (ghi rõ số mục ẩn).
+        /// </summary>
+        public static IReadOnlyList<string> FormatComparison(
+            DatabaseInventory source, DatabaseInventory dest,
+            IReadOnlyList<Models.IgnoredObject>? ignored, int maxMissingNames = 10)
+        {
+            HashSet<string>? keys = null;
+            if (ignored != null && ignored.Count > 0)
+            {
+                keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var e in ignored)
+                    keys.Add(IgnoreMatcher.CanonicalKey(e.ObjectType, e.Schema, e.Name));
+            }
+            return FormatComparison(source, dest, (ISet<string>?)keys, maxMissingNames);
+        }
+
+        /// <summary>
+        /// Lọc tên thiếu, loại các mục user chấp nhận bỏ qua.
+        /// Public để UI dùng chung logic với FormatComparison.
+        /// </summary>
+        public static IReadOnlyList<string> FilterMissing(
+            IEnumerable<string> missingNames, string label,
+            IReadOnlyList<Models.IgnoredObject>? ignored)
+        {
+            var list = missingNames.ToList();
+            if (ignored == null || ignored.Count == 0)
+                return list;
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in ignored)
+                keys.Add(IgnoreMatcher.CanonicalKey(e.ObjectType, e.Schema, e.Name));
+            return list
+                .Where(n => !keys.Contains(label + ":" + n)
+                    && !keys.Contains(IgnoreKindOf(label) + ":" + n))
+                .ToList();
+        }
+
+        /// <summary>Nhãn hiển thị ("Bảng", "Stored Procedure"...) → loại chuẩn.</summary>
+        internal static string IgnoreKindOf(string label)
+        {
+            switch ((label ?? "").Trim().ToUpperInvariant())
+            {
+                case "BẢNG": return "TABLE";
+                case "VIEW": return "VIEW";
+                case "STORED PROCEDURE": return "PROCEDURE";
+                case "FUNCTION": return "FUNCTION";
+                case "TRIGGER": return "TRIGGER";
+                case "SEQUENCE": return "SEQUENCE";
+                default: return (label ?? "").Trim().ToUpperInvariant();
+            }
         }
     }
 }

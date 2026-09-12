@@ -124,6 +124,9 @@ namespace SqlMigrator.Core.Services
                 progress?.Report(new MigrationProgress(85, "Đang đọc thống kê dữ liệu..."));
                 await AnalyzeDataDifferencesAsync(schema, dest, result, progress, ct).ConfigureAwait(false);
 
+                // 7) Ẩn các vấn đề user đã chấp nhận bỏ qua vĩnh viễn.
+                await ApplyIgnoreListAsync(result, ct).ConfigureAwait(false);
+
                 sw.Stop();
                 result.Elapsed = sw.Elapsed;
                 result.Success = result.Errors.Count == 0;
@@ -156,6 +159,43 @@ namespace SqlMigrator.Core.Services
         // ============================================================================
         // PHASE 2: FIX — chỉ ghi database ĐÍCH theo user chọn.
         // ============================================================================
+
+        /// <summary>
+        /// Ẩn các vấn đề user đã chấp nhận bỏ qua vĩnh viễn (danh sách local theo
+        /// cặp nguồn→đích). Chỉ đọc file local + log; không chạm database nào.
+        /// </summary>
+        private async Task ApplyIgnoreListAsync(ReconcileResult result, CancellationToken ct)
+        {
+            if (result.Issues.Count == 0)
+                return;
+            try
+            {
+                var store = new IgnoreListStore(_logger);
+                var ignored = await store.LoadAsync(
+                    _options.SourceConnectionString, _options.DestinationConnectionString, ct)
+                    .ConfigureAwait(false);
+                if (ignored.Count == 0)
+                    return;
+
+                var before = result.Issues.Count;
+                result.Issues = result.Issues
+                    .Where(i => !IgnoreMatcher.IsIgnored(ignored, i.ObjectType, i.ObjectName))
+                    .ToList();
+                var hidden = before - result.Issues.Count;
+                if (hidden > 0)
+                {
+                    _logger.LogInformation(
+                        "Đã ẩn {Hidden} vấn đề user chấp nhận bỏ qua (danh sách local, không báo lại).",
+                        hidden);
+                    result.AddWarning(
+                        $"Đã ẩn {hidden} mục user chấp nhận bỏ qua — đích được coi là khớp ở các mục đó.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Bỏ qua áp dụng danh sách bỏ qua ({Message}).", ex.Message);
+            }
+        }
 
         /// <summary>
         /// Xử lý (fix) các vấn đề được user chọn trên database ĐÍCH.

@@ -67,8 +67,7 @@ public class DataSyncPlanTests
 
     [Fact]
     public void BuildObjectIdName_BracketedQualifiedName_UnquotedTwoPart()
-    {
-        // Hồi quy bug Trim('[',']') biến "[dbo].[T]" thành "dbo].[T" khiến
+    {        // Hồi quy bug Trim('[',']') biến "[dbo].[T]" thành "dbo].[T" khiến
         // OBJECT_ID luôn NULL và sync bỏ qua oan với lý do "bảng chưa tồn tại".
         var t = new TableSchema { Schema = "dbo", Name = "sysdiagrams" };
         Assert.Equal("dbo.sysdiagrams", ReconcileDataSync.BuildObjectIdName(t));
@@ -90,5 +89,17 @@ public class DataSyncPlanTests
 
         Assert.Equal(13, result.TotalInserted);
         Assert.Equal(5, result.TotalUpdated);
+    }
+
+    [Theory]
+    [InlineData(new[] { "diagram_id" }, new[] { "diagram_id", "name" }, true)]
+    [InlineData(new[] { "Diagram_Id" }, new[] { "diagram_id" }, true)]
+    [InlineData(new string[0], new[] { "diagram_id" }, false)]
+    [InlineData(new[] { "other_id" }, new[] { "diagram_id" }, false)]
+    public void NeedsIdentityInsert_MatchesDestReality(
+        string[] destIdentityCols, string[] insertColumns, bool expected)
+    {
+        Assert.Equal(expected, ReconcileDataSync.NeedsIdentityInsert(
+            destIdentityCols, insertColumns));
     }
 }

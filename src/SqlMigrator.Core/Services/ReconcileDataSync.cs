@@ -209,6 +209,50 @@ namespace SqlMigrator.Core.Services
             return plan;
         }
 
+        /// <summary>
+        /// Toàn bộ cột identity của bảng đích (chỉ SELECT catalog đích).
+        /// Rỗng (không ném lỗi) khi đọc lỗi — khi đó coi như không có identity.
+        /// </summary>
+        internal static async Task<IReadOnlyList<string>> ReadDestIdentityColumnsAsync(
+            SqlConnection dest, TableSchema table, CancellationToken ct)
+        {
+            var result = new List<string>();
+            try
+            {
+                using var cmd = new SqlCommand(
+                    "SELECT c.name FROM sys.columns c "
+                    + "JOIN sys.tables t ON t.object_id = c.object_id "
+                    + "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                    + "WHERE s.name = @schema AND t.name = @table AND c.is_identity = 1;", dest)
+                { CommandTimeout = 60 };
+                cmd.Parameters.AddWithValue("@schema", table.Schema);
+                cmd.Parameters.AddWithValue("@table", table.Name);
+                using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    result.Add(reader.GetString(0));
+            }
+            catch
+            {
+                // Đọc lỗi thì trả rỗng (giữ hành vi cũ, lỗi thật sẽ hiện ở bulk).
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Có cần bật IDENTITY_INSERT không: đích có cột identity NẰM TRONG
+        /// danh sách cột sẽ chép. Thuần logic để dễ kiểm thử.
+        /// </summary>
+        internal static bool NeedsIdentityInsert(
+            IReadOnlyList<string> destIdentityCols, IReadOnlyList<string> insertColumns)
+        {
+            foreach (var col in destIdentityCols)
+            {
+                if (insertColumns.Contains(col, StringComparer.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
         private static TableSchema? FindTable(SchemaModel schema, string tableName) =>
             schema.Tables.FirstOrDefault(t =>
                 string.Equals(t.PlainName, tableName, StringComparison.OrdinalIgnoreCase));
@@ -251,9 +295,16 @@ namespace SqlMigrator.Core.Services
                 string.Equals(c, plan.KeyColumn, StringComparison.OrdinalIgnoreCase));
             var updateSql = ReconcileSql.BuildUpdateSql(plan);
             var canUpdate = !string.IsNullOrEmpty(updateSql);
-            var identityCol = table.Columns.FirstOrDefault(c =>
-                c.IsIdentity && plan.Columns.Contains(c.Name, StringComparer.OrdinalIgnoreCase));
-            var identityOn = table.HasIdentity && identityCol != null;
+            // Nguồn sự thật cho IDENTITY_INSERT là catalog ĐÍCH (bảng đích có thể
+            // khác metadata nguồn trong trường hợp lạ). Đọc một lần mỗi bảng.
+            var destIdentityCols = await ReadDestIdentityColumnsAsync(
+                dest, table, ct).ConfigureAwait(false);
+            var identityOn = NeedsIdentityInsert(destIdentityCols, plan.Columns);
+            _logger.LogInformation(
+                "Sync {T}: metadata nguồn HasIdentity={HasId}; cột identity trên đích: {Cols} → IDENTITY_INSERT {State}.",
+                table.PlainName, table.HasIdentity,
+                destIdentityCols.Count > 0 ? string.Join(", ", destIdentityCols) : "(không có)",
+                identityOn ? "BẬT" : "TẮT");
 
             string? lo = null;
             while (true)
