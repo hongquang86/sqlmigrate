@@ -2,7 +2,7 @@
 ; AppVersion truyền từ ngoài bằng ISCC /DAppVersion="x.y.z" (workflow release);
 ; build tay không truyền thì dùng mặc định dưới đây.
 #ifndef AppVersion
-#define AppVersion "1.1.2"
+#define AppVersion "1.1.3"
 #endif
 #define AppPublisher "HongQuang"
 #define AppExeName "SqlMigrator.exe"

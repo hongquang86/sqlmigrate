@@ -13,7 +13,7 @@
     <!-- Nguồn sự thật duy nhất cho phiên bản app (updater so sánh với release GitHub).
          Khi phát hành bản mới: tăng số này + AppVersion trong SQLMigrator_Setup.iss
          rồi gắn tag trùng số (VD: v1.2.0). CI build release cũng truyền Version từ tag. -->
-    <Version>1.1.2</Version>
+    <Version>1.1.3</Version>
   </PropertyGroup>
 
   <ItemGroup>
