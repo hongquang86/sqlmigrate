@@ -38,6 +38,12 @@ namespace SqlMigrator.Core.Models
         public bool IsRowVersion { get; init; }
         public bool IsNullable { get; init; }
         public bool IsPrimaryKey { get; init; }
+        /// <summary>max_length từ sys.columns (-1 = max). Dùng dựng kiểu đầy đủ khi migrate chéo.</summary>
+        public short MaxLength { get; init; }
+        /// <summary>precision từ sys.columns (decimal/numeric/datetime...).</summary>
+        public byte Precision { get; init; }
+        /// <summary>scale từ sys.columns.</summary>
+        public byte Scale { get; init; }
         public string QuotedName => SqlMigrator.Core.Services.Quoting.QuoteIdentifier(Name);
     }
 

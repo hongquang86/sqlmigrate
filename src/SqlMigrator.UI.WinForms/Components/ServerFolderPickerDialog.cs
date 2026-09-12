@@ -3,7 +3,9 @@ using SqlMigrator.Core.Services;
 namespace SqlMigrator.UI.Components
 {
     /// <summary>
-    /// Hộp thoại duyệt thư mục NGAY TRÊN server đích qua kết nối SQL (không cần share mạng).
+    /// Hộp thoại duyệt thư mục NGAY TRÊN server qua kết nối SQL (không cần share mạng).
+    /// <paramref name="serverRole"/> là "đích" (mặc định, tương thích code cũ) hoặc
+    /// "nguồn" — chỉ dùng để hiển thị nhãn cho đúng, không ảnh hưởng logic.
     /// Bước 1: hiển thị thư mục mặc định (.mdf/.ldf) của server + nút "Dùng mặc định".
     /// Bước 2: danh sách ổ đĩa từ <c>xp_fixeddrives</c>; chọn ổ → liệt kê thư mục con cấp 1.
     /// Bước 3: cho nhập tay trực tiếp khi server quá hạn chế quyền (xp_dirtree bị từ chối).
@@ -15,6 +17,7 @@ namespace SqlMigrator.UI.Components
         private readonly IServerFolderLister _lister;
         private readonly string _connectionString;
         private readonly CancellationToken _ct;
+        private readonly string _role;
 
         private readonly ListBox _listDrives = new() { Dock = DockStyle.Fill };
         private readonly TextBox _txtPath = new() { Dock = DockStyle.Top };
@@ -31,13 +34,14 @@ namespace SqlMigrator.UI.Components
 
         public string SelectedPath => _txtPath.Text.Trim();
 
-        public ServerFolderPickerDialog(IServerFolderLister lister, string connectionString, CancellationToken ct = default)
+        public ServerFolderPickerDialog(IServerFolderLister lister, string connectionString, CancellationToken ct = default, string serverRole = "đích")
         {
             _lister = lister ?? throw new ArgumentNullException(nameof(lister));
             _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
             _ct = ct;
+            _role = string.IsNullOrWhiteSpace(serverRole) ? "đích" : serverRole.Trim();
 
-            Text = "Chọn thư mục chứa file database trên SERVER ĐÍCH";
+            Text = "Chọn thư mục chứa file database trên SERVER " + _role.ToUpperInvariant();
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -47,7 +51,7 @@ namespace SqlMigrator.UI.Components
 
             _lblHint.Dock = DockStyle.Top;
             _lblHint.Padding = new Padding(12, 10, 12, 0);
-            _lblHint.Text = "Đang kết nối server đích để đọc thư mục...";
+            _lblHint.Text = "Đang kết nối server " + _role + " để đọc thư mục...";
 
             _txtPath.Dock = DockStyle.Top;
             _txtPath.Padding = new Padding(12, 6, 12, 4);
@@ -72,7 +76,7 @@ namespace SqlMigrator.UI.Components
             root.Controls.Add(layout, 0, 0);
             Controls.Add(root);
 
-            _lblHint.Text = "Đang kết nối server đích để đọc thư mục...";
+            _lblHint.Text = "Đang kết nối server " + _role + " để đọc thư mục...";
 
             _btnUseDefault.Click += async (_, _) => await UseDefaultAsync();
             _listDrives.SelectedIndexChanged += (_, _) => UpdatePathFromSelection();
@@ -114,7 +118,7 @@ namespace SqlMigrator.UI.Components
                         parts.Add(".mdf mặc định: " + defaults.DataPath);
                     if (!string.IsNullOrWhiteSpace(defaults.LogPath))
                         parts.Add(".ldf mặc định: " + defaults.LogPath);
-                    _lblHint.Text = "Thư mục mặc định của server đích: " + string.Join(" · ", parts) +
+                    _lblHint.Text = "Thư mục mặc định của server " + _role + ": " + string.Join(" · ", parts) +
                                     Environment.NewLine + "Chọn thư mục thấp hơn để tránh lỗi quyền ghi file.";
                 }
 
@@ -134,7 +138,7 @@ namespace SqlMigrator.UI.Components
             {
                 var drives = await _lister.GetDrivesAsync(_connectionString, _ct).ConfigureAwait(true);
                 if (drives == null || drives.Count == 0)
-                    throw new InvalidOperationException("Server đích không trả về ổ đĩa nào.");
+                    throw new InvalidOperationException("Server " + _role + " không trả về ổ đĩa nào.");
 
                 _isPopulating = true;
                 try

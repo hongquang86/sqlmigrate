@@ -10,6 +10,8 @@ namespace SqlMigrator.Core.Interfaces
         /// <summary>Host/instance (SQL/PG/MySQL/Mongo) hoặc đường dẫn file (.db SQLite).</summary>
         public string Host { get; init; } = string.Empty;
         public int Port { get; init; }
+        /// <summary>Database/file mặc định (có thể rỗng với detect).</summary>
+        public string Database { get; init; } = string.Empty;
         public string User { get; init; } = string.Empty;
         public string Password { get; init; } = string.Empty;
         public bool UseWindowsAuth { get; init; }

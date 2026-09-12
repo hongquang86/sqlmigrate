@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using SqlMigrator.Core.Interfaces;
 using SqlMigrator.Core.Models;
 using SqlMigrator.Core.Security;
+using SqlMigrator.Core.Services.DataMove;
 using SqlMigrator.Core.Services.DbProviders;
 using SqlMigrator.UI.Services;
 
@@ -26,7 +27,7 @@ namespace SqlMigrator.UI.Components
         private readonly TextBox _txtUser = new();
         private readonly TextBox _txtPassword = new();
         private readonly ComboBox _cmbDatabase = new();
-        private readonly ComboBox _cmbEngine = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly TextBox _txtEngine = new() { Dock = DockStyle.Fill };
         private readonly NumericUpDown _numPort = new() { Minimum = 0, Maximum = 65535, Width = 80 };
         private readonly Label _lblEngineInfo = new() { AutoSize = true, ForeColor = Color.Gray };
         private readonly ComboBox _cmbProfile = new();
@@ -35,7 +36,7 @@ namespace SqlMigrator.UI.Components
         private readonly RadioButton _rdoSql = new() { Text = "Xác thực SQL Server" };
         private readonly CheckBox _chkEncrypt = new() { Text = "Mã hóa kết nối" };
         private readonly CheckBox _chkTrustCertificate = new();
-        private readonly Label _lblSafeSummary = new() { ForeColor = Color.Gray, AutoSize = true };
+        private readonly Label _lblSafeSummary = new() { ForeColor = Color.Gray, AutoSize = false, Dock = DockStyle.Fill };
         private readonly Label _lblDbs = new() { Text = "Database:", AutoSize = true };
         private readonly Label _lblServer = new() { Text = "Server / Instance:", AutoSize = true };
         private readonly Label _lblUser = new() { Text = "Tên đăng nhập:", AutoSize = true };
@@ -53,6 +54,7 @@ namespace SqlMigrator.UI.Components
         private readonly Button _btnBrowseDataPath = new() { Text = "Chọn…", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         private readonly Button _btnBrowseLogPath = new() { Text = "Chọn…", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         private readonly Button _btnCreateDb = new() { Text = "Tạo DB", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        private readonly Button _btnBrowseFile = new() { Text = "Chọn file…", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Visible = false };
         private bool _showDbFileFields;
 
         /// <summary>Loại thẻ profile (vd "source" / "dest") để không đè profile của trang khác.</summary>
@@ -140,8 +142,13 @@ namespace SqlMigrator.UI.Components
             root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55F));
 
-            // Hàng 0: Server/Instance | Profile + Lưu/Xóa
+            // Hàng 0: Server/Instance (+ nút chọn file .db khi SQLite) | Profile + Lưu/Xóa
             _txtServer.Dock = DockStyle.Fill;
+            var serverRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
+            serverRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            serverRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            serverRow.Controls.Add(_txtServer, 0, 0);
+            serverRow.Controls.Add(_btnBrowseFile, 1, 0);
             _cmbProfile.Dock = DockStyle.Fill;
             var profileRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
             profileRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -151,7 +158,7 @@ namespace SqlMigrator.UI.Components
             profileRow.Controls.Add(_btnSaveProfile, 1, 0);
             profileRow.Controls.Add(_btnDeleteProfile, 2, 0);
             root.Controls.Add(_lblServer, 0, 0);
-            root.Controls.Add(_txtServer, 1, 0);
+            root.Controls.Add(serverRow, 1, 0);
             root.Controls.Add(new Label { Text = "Profile:", AutoSize = true, Padding = new Padding(10, 8, 0, 0) }, 2, 0);
             root.Controls.Add(profileRow, 3, 0);
 
@@ -159,16 +166,15 @@ namespace SqlMigrator.UI.Components
             var authPanel = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
             authPanel.Controls.Add(_rdoWindows);
             authPanel.Controls.Add(_rdoSql);
-            _cmbDatabase.Dock = DockStyle.Fill;
-            var dbRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, AutoSize = true };
-            dbRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            dbRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            dbRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            dbRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            dbRow.Controls.Add(_cmbDatabase, 0, 0);
-            dbRow.Controls.Add(_btnLoadDatabases, 1, 0);
-            dbRow.Controls.Add(_btnTest, 2, 0);
-            dbRow.Controls.Add(_btnCreateDb, 3, 0);
+            // Hàng nút Connect/Kiểm tra/Tạo DB: FlowLayout tự xuống dòng khi GroupBox hẹp,
+            // tránh cắt chữ nút (lỗi hiển thị ở tab Sao lưu/Khôi phục khi 2 editor nằm cạnh nhau).
+            _cmbDatabase.Dock = DockStyle.None;
+            _cmbDatabase.Width = 220;
+            var dbRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+            dbRow.Controls.Add(_cmbDatabase);
+            dbRow.Controls.Add(_btnLoadDatabases);
+            dbRow.Controls.Add(_btnTest);
+            dbRow.Controls.Add(_btnCreateDb);
             root.Controls.Add(new Label { Text = "Xác thực:", AutoSize = true }, 0, 1);
             root.Controls.Add(authPanel, 1, 1);
             root.Controls.Add(_lblDbs, 2, 1);
@@ -212,12 +218,26 @@ namespace SqlMigrator.UI.Components
             root.Controls.Add(_lblDbLog, 2, 4);
             root.Controls.Add(logPathRow, 3, 4);
 
-            _cmbEngine.DropDownStyle = ComboBoxStyle.DropDownList;
+            _cmbDatabase.DropDownStyle = ComboBoxStyle.DropDown;
             foreach (var choice in EngineChoices.All)
-                _cmbEngine.Items.Add(choice.Display);
-            _cmbEngine.SelectedIndex = 0;
-            _cmbEngine.Dock = DockStyle.Fill;
-            _cmbEngine.SelectedIndexChanged += (_, _) => UpdateEngineState();
+                _cmbDatabase.Items.Add(choice.Display);
+            _cmbDatabase.SelectedIndex = 0;
+            _cmbDatabase.Dock = DockStyle.Fill;
+            _cmbDatabase.SelectedIndexChanged += (_, _) => UpdateAuthState();
+
+            // Hệ CSDL: textbox chỉ HIỂN THỊ engine detect được, KHÔNG phải select box.
+            // Mặc định "Tự động" (chưa detect). Sau khi Connect/Kiểm tra, hiện tên
+            // engine (VD: "SQL Server", "SQLite (file)") và engine value lưu trong Tag.
+            _txtEngine.ReadOnly = true;
+            _txtEngine.BackColor = Color.FromArgb(255, 255, 240);
+            _txtEngine.Text = EngineChoices.All[0].Display;
+            _txtEngine.Tag = "";
+            _txtEngine.Dock = DockStyle.Fill;
+            _txtEngine.TextChanged += (_, _) =>
+            {
+                // Cho phép người dùng gõ tay engine (VD: SQLite sau khi chọn file).
+                _txtEngine.Tag = "";
+            };
 
             // Hàng 5: Hệ CSDL + Port | thông tin nhận diện
             var engineRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
@@ -227,7 +247,7 @@ namespace SqlMigrator.UI.Components
             var portPanel = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
             portPanel.Controls.Add(new Label { Text = "Port:", AutoSize = true, Padding = new Padding(0, 4, 0, 0) });
             portPanel.Controls.Add(_numPort);
-            engineRow.Controls.Add(_cmbEngine, 0, 0);
+            engineRow.Controls.Add(_txtEngine, 0, 0);
             engineRow.Controls.Add(portPanel, 1, 0);
             engineRow.Controls.Add(_lblEngineInfo, 2, 0);
             root.Controls.Add(new Label { Text = "Hệ CSDL:", AutoSize = true }, 0, 5);
@@ -264,6 +284,7 @@ namespace SqlMigrator.UI.Components
             _btnDeleteProfile.Click += (_, _) => DeleteProfile();
             _btnBrowseDataPath.Click += async (_, _) => _txtDbDataPath.Text = await PickFolderFromServerAsync();
             _btnBrowseLogPath.Click += async (_, _) => _txtDbLogPath.Text = await PickFolderFromServerAsync();
+            _btnBrowseFile.Click += (_, _) => BrowseSqliteFile();
             _btnCreateDb.Click += async (_, _) => await CreateDatabaseAsync();
             _cmbProfile.SelectedIndexChanged += (_, _) => LoadProfileIntoControls();
             _cmbDatabase.TextChanged += (_, _) => MaybeAutoSaveDefault();
@@ -272,6 +293,9 @@ namespace SqlMigrator.UI.Components
             AutoLoadDefaultProfile();
         }
 
+        /// <summary>Mật khẩu văn bản thuần trong bộ nhớ (chỉ dùng mở kết nối, không log/lưu).</summary>
+        internal string GetPlainPassword() => _txtPassword.Text;
+
         private void UpdateAuthState()
         {
             var sql = _rdoSql.Checked;
@@ -279,25 +303,54 @@ namespace SqlMigrator.UI.Components
             _txtPassword.Enabled = sql;
         }
 
-        /// <summary>Mục engine đang chọn (mặc định mục đầu = Tự động).</summary>
-        private EngineChoice SelectedEngineChoice()
-        {
-            var idx = _cmbEngine.SelectedIndex;
-            if (idx < 0 || idx >= EngineChoices.All.Count)
-                idx = 0;
-            return EngineChoices.All[idx];
-        }
+        /// <summary>Engine value đang chọn (trong Tag); rỗng = Tự động.</summary>
+        private string GetEngineValue() => _txtEngine.Tag as string ?? string.Empty;
 
         /// <summary>
         /// Đổi engine: tự điền port mặc định khi ô port đang để 0, xóa thông tin
-        /// nhận diện cũ (tránh hiển thị version của engine trước đó).
+        /// nhận diện cũ (tránh hiển thị version của engine trước đó). SQLite dùng
+        /// file local nên đổi nhãn Server thành File + hiện nút chọn file .db.
         /// </summary>
         private void UpdateEngineState()
         {
-            var choice = SelectedEngineChoice();
-            if (_numPort.Value == 0 && choice.DefaultPort > 0)
+            var engineValue = GetEngineValue();
+            var choice = EngineChoices.All.FirstOrDefault(c => c.Value.Equals(engineValue,
+                StringComparison.OrdinalIgnoreCase));
+            if (choice != null && _numPort.Value == 0 && choice.DefaultPort > 0)
                 _numPort.Value = choice.DefaultPort;
             _lblEngineInfo.Text = "";
+            var isSqlite = EngineInfo.ParseEngine(engineValue) == DatabaseEngine.Sqlite;
+            _lblServer.Text = isSqlite ? "File SQLite (.db):" : "Server / Instance:";
+            _btnBrowseFile.Visible = isSqlite;
+            _lblDbs.Text = isSqlite ? "File DB:" : "Database:";
+        }
+
+        /// <summary>Chọn file SQLite (.db): điền ô Server (= đường dẫn file) và ô Database.</summary>
+        private void BrowseSqliteFile()
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Filter = "SQLite (*.db;*.sqlite;*.sqlite3)|*.db;*.sqlite;*.sqlite3|Tất cả (*.*)|*.*",
+                CheckFileExists = false,
+                Title = "Chọn file SQLite"
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            _txtServer.Text = dlg.FileName;
+            _cmbDatabase.Items.Clear();
+            _cmbDatabase.Items.Add(dlg.FileName);
+            _cmbDatabase.SelectedIndex = 0;
+            SetEngineValue("Sqlite", "SQLite (file)");
+            UpdateEngineState();
+            SetConnStatus("Đã chọn file SQLite: " + dlg.FileName, true);
+        }
+
+        /// <summary>Đặt engine hiển thị trong textbox + giá trị trong Tag.</summary>
+        private void SetEngineValue(string value, string? displayName = null)
+        {
+            _txtEngine.Tag = value ?? "";
+            _txtEngine.Text = string.IsNullOrWhiteSpace(displayName)
+                ? EngineChoices.DisplayOf(value)
+                : displayName;
         }
 
         /// <summary>Mở hộp thoại duyệt thư mục trên CHÍNH server đích (dựa kết nối SQL hiện có), điền vào ô TextBox.</summary>
@@ -513,7 +566,7 @@ namespace SqlMigrator.UI.Components
                 UserName = userName,
                 EncryptConnection = _chkEncrypt.Checked,
                 TrustServerCertificate = _chkTrustCertificate.Checked,
-                Engine = SelectedEngineChoice().Value,
+                Engine = GetEngineValue(),
                 Port = (int)_numPort.Value
             };
 
@@ -550,17 +603,10 @@ namespace SqlMigrator.UI.Components
             }
             _chkEncrypt.Checked = profile.EncryptConnection;
             _chkTrustCertificate.Checked = profile.TrustServerCertificate;
-            var engineIdx = 0;
-            for (var i = 0; i < EngineChoices.All.Count; i++)
-            {
-                if (EngineChoices.All[i].Value.Equals(profile.Engine ?? "",
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    engineIdx = i;
-                    break;
-                }
-            }
-            _cmbEngine.SelectedIndex = engineIdx;
+            var engineValue = profile.Engine ?? "";
+            var display = EngineChoices.DisplayOf(engineValue);
+            SetEngineValue(string.IsNullOrWhiteSpace(engineValue) ? "" : engineValue, display);
+            UpdateEngineState();
             _numPort.Value = Math.Clamp(profile.Port, 0, 65535);
             _lblEngineInfo.Text = "";
             UpdateAuthState();
@@ -572,7 +618,7 @@ namespace SqlMigrator.UI.Components
         {
             try
             {
-                var selected = SelectedEngineChoice().Value;
+                var selected = GetEngineValue();
                 var probe = new DbProbe
                 {
                     Host = profile.Server,
@@ -598,17 +644,27 @@ namespace SqlMigrator.UI.Components
             }
         }
 
-        /// <summary>Chốt combobox theo engine vừa nhận diện (không reset port người dùng).</summary>
+        /// <summary>Chốt textbox Hệ CSDL + ô Port theo kết quả nhận diện.</summary>
+        private void ApplyDetectedEngine(EngineInfo? detected)
+        {
+            if (detected == null || detected.Engine == DatabaseEngine.Unknown) return;
+            SetEngineSelection(detected.Engine);
+            UpdateEngineState();
+            if (_numPort.Value == 0)
+            {
+                var provider = EngineDetector.GetProvider(detected.Engine);
+                if (provider != null && provider.DefaultPort > 0)
+                    _numPort.Value = provider.DefaultPort;
+            }
+            _lblEngineInfo.Text = "Nhận diện: " + detected.Describe();
+        }
+
+        /// <summary>Chọn engine trong textbox (không reset port người dùng).</summary>
         private void SetEngineSelection(DatabaseEngine engine)
         {
-            for (var i = 0; i < EngineChoices.All.Count; i++)
-            {
-                if (EngineChoices.All[i].Value.Equals(engine.ToString(), StringComparison.OrdinalIgnoreCase))
-                {
-                    _cmbEngine.SelectedIndex = i;
-                    break;
-                }
-            }
+            var choice = EngineChoices.All.FirstOrDefault(c => c.Value.Equals(engine.ToString(),
+                StringComparison.OrdinalIgnoreCase));
+            if (choice != null) SetEngineValue(choice.Value, choice.Display);
             _lblEngineInfo.Text = "";
         }
 
@@ -638,11 +694,13 @@ namespace SqlMigrator.UI.Components
                 var profile = ReadProfile();
                 if (profile == null) return;
                 // Nhận diện engine trước: Tự động → thử tất cả (SQL trước);
-                // chọn tay engine cụ thể → chỉ probe engine đó.
+                // chọn tay engine cụ thể → chỉ probe engine đó. Kết quả luôn chốt
+                // lên textbox Hệ CSDL + ô Port để người dùng thấy đúng thông số.
                 var detected = await DetectEngineForTestAsync(profile);
-                if (detected != null && detected.Engine != DatabaseEngine.SqlServer)
+                ApplyDetectedEngine(detected);
+                if (detected != null && detected.Engine != DatabaseEngine.SqlServer
+                    && detected.Engine != DatabaseEngine.Unknown)
                 {
-                    SetEngineSelection(detected.Engine);
                     await ShowDetectedEngineAsync(profile, detected.Engine, detected);
                     return;
                 }
@@ -686,8 +744,72 @@ namespace SqlMigrator.UI.Components
             {
                 var profile = ReadProfile();
                 if (profile == null) return;
-                // Engine khác SQL Server: Pha 1 chưa liệt kê database cho engine khác.
-                if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer)
+                // Chế độ "Tự động": nhận diện engine trước để chốt đúng textbox Hệ CSDL
+                // + ô Port, rồi mới rẽ nhánh liệt kê database theo engine vừa nhận diện.
+                // Nhận diện thất bại → giữ luồng cũ (coi như SQL Server).
+                if (string.IsNullOrEmpty(GetEngineValue()))
+                {
+                    var auto = await DetectEngineForTestAsync(profile);
+                    if (auto != null && auto.Engine != DatabaseEngine.Unknown)
+                    {
+                        ApplyDetectedEngine(auto);
+                        Log("[THÔNG TIN] " + RoleLabel + " tự nhận diện " + auto.Describe() + ".");
+                    }
+                }
+                var engine = EngineInfo.ParseEngine(GetEngineValue());
+                // SQLite: database chính là file — kiểm tra file rồi nạp thẳng vào combobox.
+                if (engine == DatabaseEngine.Sqlite)
+                {
+                    var path = profile.Server.Trim();
+                    if (System.IO.File.Exists(path))
+                    {
+                        _cmbDatabase.Items.Clear();
+                        _cmbDatabase.Items.Add(path);
+                        _cmbDatabase.SelectedIndex = 0;
+                        SetConnStatus("File SQLite đã sẵn sàng: " + path, true);
+                        Log("[THÔNG TIN] " + RoleLabel + " dùng file SQLite " + SafeServer(profile) + ".");
+                        AutoSaveDefaultProfile();
+                    }
+                    else
+                    {
+                        SetConnStatus("File SQLite chưa tồn tại — bấm 'Tạo DB' để tạo file mới.", false);
+                        Log("[CẢNH BÁO] " + RoleLabel + " file SQLite chưa tồn tại: " + SafeServer(profile) + ".");
+                    }
+                    return;
+                }
+                // PostgreSQL: liệt kê database qua pg_database để người dùng chọn.
+                if (engine == DatabaseEngine.PostgreSql)
+                {
+                    try
+                    {
+                        var probe = new DbProbe
+                        {
+                            Host = profile.Server,
+                            Port = profile.Port,
+                            User = profile.UserName,
+                            Password = _txtPassword.Text,
+                            TimeoutSeconds = 5
+                        };
+                        var pgDbs = await PostgresEndpoint.ListDatabasesAsync(probe);
+                        _cmbDatabase.Items.Clear();
+                        _cmbDatabase.Items.Add(DbPlaceholder);
+                        foreach (var name in pgDbs) _cmbDatabase.Items.Add(name);
+                        if (!string.IsNullOrWhiteSpace(profile.Database)
+                            && pgDbs.Contains(profile.Database))
+                            _cmbDatabase.Text = profile.Database;
+                        SetConnStatus($"Đã nạp {pgDbs.Count} database PostgreSQL — hãy chọn một.", true);
+                        Log("[THÔNG TIN] " + RoleLabel + " " + SafeServer(profile)
+                            + $" đã nạp {pgDbs.Count} database PostgreSQL.");
+                    }
+                    catch (Exception ex)
+                    {
+                        SetConnStatus("Không liệt kê được database PostgreSQL: " + ex.Message, false);
+                        Log("[LỖI] " + RoleLabel + " không liệt kê được database PostgreSQL: " + ex.Message);
+                    }
+                    return;
+                }
+                // Engine khác SQL Server: Pha này mới nhận diện, chưa liệt kê database cho engine khác.
+                if (engine != DatabaseEngine.SqlServer)
                 {
                     var name = EngineChoices.DisplayOf(profile.Engine);
                     SetConnStatus($"Đã chọn {name} — liệt kê database cho engine này ở pha sau.", true);

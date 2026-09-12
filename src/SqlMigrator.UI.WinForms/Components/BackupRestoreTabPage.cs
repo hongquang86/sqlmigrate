@@ -20,8 +20,13 @@ namespace SqlMigrator.UI.Components
         private readonly ConnectionEditor _sourceEditor;
         private readonly ConnectionEditor _destEditor;
 
-        private readonly TextBox _txtBackupDb = new() { Dock = DockStyle.Fill };
-        private readonly TextBox _txtBackupFile = new() { Dock = DockStyle.Fill };
+        private readonly TextBox _txtBackupFolder = new() { Dock = DockStyle.Fill };
+        private readonly TextBox _txtBackupFileName = new() { Dock = DockStyle.Fill };
+        private readonly Button _btnBrowseBackupFile = new() { Text = "Chọn…", AutoSize = true };
+        private readonly CheckedListBox _lstBackupDbs = new() { Dock = DockStyle.Fill, Height = 84, CheckOnClick = true };
+        private readonly Button _btnReloadDbs = new() { Text = "Nạp DS database", AutoSize = true };
+        private readonly Button _btnCheckAllDbs = new() { Text = "Chọn hết", AutoSize = true };
+        private readonly Button _btnUncheckAllDbs = new() { Text = "Bỏ hết", AutoSize = true };
         private readonly RadioButton _rdoFull = new() { Text = "Đầy đủ (Full)", Checked = true, AutoSize = true };
         private readonly RadioButton _rdoDiff = new() { Text = "Chênh lệch (Diff)", AutoSize = true };
         private readonly CheckBox _chkCompression = new() { Text = "Nén backup", Checked = true, AutoSize = true };
@@ -31,6 +36,9 @@ namespace SqlMigrator.UI.Components
         private readonly TextBox _txtRestoreDb = new() { Dock = DockStyle.Fill };
         private readonly TextBox _txtRestoreDataDir = new() { Dock = DockStyle.Fill };
         private readonly TextBox _txtRestoreLogDir = new() { Dock = DockStyle.Fill };
+        private readonly Button _btnBrowseRestoreFile = new() { Text = "Chọn…", AutoSize = true };
+        private readonly Button _btnBrowseRestoreDataDir = new() { Text = "Chọn…", AutoSize = true };
+        private readonly Button _btnBrowseRestoreLogDir = new() { Text = "Chọn…", AutoSize = true };
         private readonly CheckBox _chkReplace = new() { Text = "Ghi đè DB đã tồn tại (ngắt kết nối đang dùng)", AutoSize = true };
         private readonly CheckBox _chkRecovery = new() { Text = "Online ngay sau restore (RECOVERY)", Checked = true, AutoSize = true };
         private readonly Button _btnFileList = new() { Text = "Đọc danh sách file", AutoSize = true };
@@ -116,17 +124,17 @@ namespace SqlMigrator.UI.Components
             historyGroup.Controls.Add(historyPanel);
 
             var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-            left.RowStyles.Add(new RowStyle(SizeType.Percent, 38F));
-            left.RowStyles.Add(new RowStyle(SizeType.Percent, 34F));
-            left.RowStyles.Add(new RowStyle(SizeType.Percent, 28F));
+            left.RowStyles.Add(new RowStyle(SizeType.Percent, 42F));
+            left.RowStyles.Add(new RowStyle(SizeType.Percent, 32F));
+            left.RowStyles.Add(new RowStyle(SizeType.Percent, 26F));
             left.Controls.Add(srcGroup, 0, 0);
             left.Controls.Add(backupGroup, 0, 1);
             left.Controls.Add(sqliteGroup, 0, 2);
 
             var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-            right.RowStyles.Add(new RowStyle(SizeType.Percent, 38F));
             right.RowStyles.Add(new RowStyle(SizeType.Percent, 34F));
-            right.RowStyles.Add(new RowStyle(SizeType.Percent, 28F));
+            right.RowStyles.Add(new RowStyle(SizeType.Percent, 42F));
+            right.RowStyles.Add(new RowStyle(SizeType.Percent, 24F));
             right.Controls.Add(dstGroup, 0, 0);
             right.Controls.Add(restoreGroup, 0, 1);
             right.Controls.Add(historyGroup, 0, 2);
@@ -135,7 +143,7 @@ namespace SqlMigrator.UI.Components
             top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             top.Controls.Add(left, 0, 0);
-            top.Controls.Add(right, 0, 0);
+            top.Controls.Add(right, 1, 0);
 
             var split = new SplitContainer
             {
@@ -168,8 +176,10 @@ namespace SqlMigrator.UI.Components
                 try
                 {
                     var usable = ClientSize.Height - split.SplitterWidth;
-                    split.SplitterDistance = Math.Clamp((int)(usable * 0.62),
-                        200, Math.Max(200, usable - 140));
+                    // Trên 75% / dưới 25%: khung log nhỏ hơn ~2/3 so với cũ,
+                    // nhường không gian cho 6 group box bên trên hiển thị rộng rãi hơn.
+                    split.SplitterDistance = Math.Clamp((int)(usable * 0.75),
+                        280, Math.Max(280, usable - 100));
                 }
                 catch { }
             };
@@ -177,41 +187,205 @@ namespace SqlMigrator.UI.Components
 
         private Control BuildBackupPanel()
         {
-            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
+            // Dock=Top (không phải Fill) để panel cao hơn khung nhìn thì
+            // thanh cuộn của Panel ngoài mới hiện — nội dung không bao giờ bị xén.
+            var panel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             var typeRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
             typeRow.Controls.Add(_rdoFull);
             typeRow.Controls.Add(_rdoDiff);
             typeRow.Controls.Add(_chkCompression);
-            panel.Controls.Add(new Label { Text = "Tên DB:", AutoSize = true }, 0, 0);
-            panel.Controls.Add(_txtBackupDb, 1, 0);
-            panel.Controls.Add(new Label { Text = "File .bak (server):", AutoSize = true }, 0, 1);
-            panel.Controls.Add(_txtBackupFile, 1, 1);
-            panel.Controls.Add(new Label { Text = "Loại:", AutoSize = true }, 0, 2);
-            panel.Controls.Add(typeRow, 1, 2);
-            panel.Controls.Add(_btnBackup, 1, 3);
+            // Hàng chọn DB: lưới checkbox + 3 nút nạp/chọn/bỏ (dọc).
+            var dbButtons = new FlowLayoutPanel
+            {
+                AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.TopDown
+            };
+            dbButtons.Controls.Add(_btnReloadDbs);
+            dbButtons.Controls.Add(_btnCheckAllDbs);
+            dbButtons.Controls.Add(_btnUncheckAllDbs);
+            panel.Controls.Add(new Label { Text = "Database cần sao lưu:", AutoSize = true });
+            panel.SetColumnSpan(panel.Controls[panel.Controls.Count - 1], 3);
+            panel.Controls.Add(_lstBackupDbs, 1, 1);
+            panel.Controls.Add(dbButtons, 2, 1);
+            panel.Controls.Add(new Label { Text = "Thư mục lưu (server):", AutoSize = true }, 0, 2);
+            panel.Controls.Add(_txtBackupFolder, 1, 2);
+            panel.Controls.Add(_btnBrowseBackupFile, 2, 2);
+            panel.Controls.Add(new Label { Text = "Tên file (.bak):", AutoSize = true }, 0, 3);
+            panel.Controls.Add(_txtBackupFileName, 1, 3);
+            panel.SetColumnSpan(_txtBackupFileName, 2);
+            panel.Controls.Add(new Label { Text = "Loại:", AutoSize = true }, 0, 4);
+            panel.Controls.Add(typeRow, 1, 4);
+            panel.SetColumnSpan(typeRow, 2);
+            panel.Controls.Add(_btnBackup, 1, 5);
             return new Panel { Dock = DockStyle.Fill, AutoScroll = true, Controls = { panel } };
+        }
+
+        /// <summary>
+        /// Duyệt disk TRÊN SERVER nguồn để chọn THƯ MỤC lưu file .bak
+        /// (không phải disk máy chạy app). Tên file xử lý riêng theo từng DB.
+        /// </summary>
+        private void PickBackupFolderOnServer()
+        {
+            PickServerFolder(_sourceEditor, "nguồn", _txtBackupFolder, keepFileName: false);
+        }
+
+        /// <summary>Database hệ thống: vẫn liệt kê nhưng mặc định không check.</summary>
+        private static readonly HashSet<string> SystemDatabases = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "master", "model", "msdb", "tempdb"
+        };
+
+        /// <summary>
+        /// Nạp toàn bộ database trên server nguồn vào lưới checkbox (DB hệ thống
+        /// mặc định bỏ check). Dùng chung kết nối ở khối nguồn.
+        /// </summary>
+        private async Task LoadSourceDatabasesForBackupAsync()
+        {
+            var profile = _sourceEditor.ReadProfile();
+            if (profile == null) return;
+            if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer)
+            {
+                MessageBox.Show("Sao lưu multi-database chỉ dùng cho SQL Server.",
+                    "Không hỗ trợ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            _btnReloadDbs.Enabled = false;
+            try
+            {
+                var dbs = await DatabaseCatalog.GetDatabasesAsync(profile, _builder, log: AppendLog);
+                _lstBackupDbs.Items.Clear();
+                foreach (var db in dbs)
+                    _lstBackupDbs.Items.Add(db, !SystemDatabases.Contains(db));
+                RefreshBackupFileNameBox();
+                AppendLog($"[THÔNG TIN] Server nguồn {profile.Server} có {dbs.Count} database " +
+                    $"({_lstBackupDbs.CheckedItems.Count} đã chọn).");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[LỖI] Không nạp được danh sách database: " + ex.Message);
+                MessageBox.Show("Không nạp được danh sách database:\n" + ex.Message,
+                    "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _btnReloadDbs.Enabled = true;
+            }
+        }
+
+        private List<string> GetCheckedBackupDbs()
+        {
+            var result = new List<string>();
+            foreach (var item in _lstBackupDbs.CheckedItems)
+            {
+                if (item is string db && !string.IsNullOrWhiteSpace(db))
+                    result.Add(db);
+            }
+            return result;
+        }
+
+        /// <summary>Tên file mặc định: &lt;TênDB&gt;_yyyyMMdd_HHmmss[_Diff].bak (không dấu cách, dễ sắp xếp).</summary>
+        private string SuggestBackupFileName(string db) =>
+            $"{db}_{DateTime.Now:yyyyMMdd_HHmmss}{(_rdoDiff.Checked ? "_Diff" : "")}.bak";
+
+        /// <summary>
+        /// Chỉ cho sửa tên file khi đúng 1 DB được check; nhiều DB thì khóa ô
+        /// và dùng tên tự sinh để khỏi trùng. Gợi ý tên khi ô đang trống.
+        /// </summary>
+        private void RefreshBackupFileNameBox()
+        {
+            var checkedDbs = GetCheckedBackupDbs();
+            var single = checkedDbs.Count == 1;
+            _txtBackupFileName.Enabled = single;
+            if (single && string.IsNullOrWhiteSpace(_txtBackupFileName.Text))
+                _txtBackupFileName.Text = SuggestBackupFileName(checkedDbs[0]);
+        }
+
+        /// <summary>
+        /// Duyệt disk TRÊN SERVER (nguồn/đích) để chọn thư mục, điền vào ô nhập liệu.
+        /// keepFileName=true thì giữ tên file đã gõ (dùng cho ô .bak), false thì lấy nguyên thư mục.
+        /// </summary>
+        private void PickServerFolder(ConnectionEditor editor, string role, TextBox target,
+            bool keepFileName, string defaultFileName = "")
+        {
+            var profile = editor.ReadProfile();
+            if (profile == null) return;
+            if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer)
+            {
+                MessageBox.Show("Duyệt disk server chỉ dùng cho SQL Server. " +
+                    "Sao lưu SQLite dùng nút 'Chọn…'/'Lưu…' ở mục 5.",
+                    "Không hỗ trợ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string connectionString;
+            try
+            {
+                connectionString = _builder.Build(profile);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Không dựng được kết nối server " + role + ": " + ex.Message,
+                    "Lỗi kết nối", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            var service = new ServerFolderService(m => AppendLog("[THƯ MỤC] " + m));
+            using var dialog = new ServerFolderPickerDialog(service, connectionString, CancellationToken.None, role);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            var folder = dialog.SelectedPath.Trim().TrimEnd('\\');
+            if (string.IsNullOrWhiteSpace(folder)) return;
+            if (!keepFileName)
+            {
+                target.Text = folder;
+            }
+            else
+            {
+                var fileName = ExtractFileName(target.Text);
+                if (string.IsNullOrWhiteSpace(fileName))
+                    fileName = defaultFileName;
+                target.Text = string.IsNullOrWhiteSpace(fileName)
+                    ? folder + "\\"
+                    : folder + "\\" + fileName;
+            }
+            AppendLog("[THÔNG TIN] Đã chọn trên server " + role + ": " + target.Text);
+        }
+
+        /// <summary>Tách tên file khỏi đường dẫn đã gõ (rỗng nếu ô chỉ có thư mục hoặc chưa nhập).</summary>
+        private static string ExtractFileName(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            var name = path.Replace('/', '\\');
+            var idx = name.LastIndexOf('\\');
+            name = idx >= 0 ? name.Substring(idx + 1) : name;
+            return name.Contains('.') ? name : string.Empty;
         }
 
         private Control BuildRestorePanel()
         {
-            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
+            // Dock=Top để thanh cuộn hoạt động khi nội dung (nhất là hàng File logic)
+            // cao hơn group — xem chú thích ở BuildBackupPanel.
+            var panel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             var optRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true };
             optRow.Controls.Add(_chkReplace);
             optRow.Controls.Add(_chkRecovery);
             panel.Controls.Add(new Label { Text = "File .bak (server):", AutoSize = true }, 0, 0);
             panel.Controls.Add(_txtRestoreFile, 1, 0);
+            panel.Controls.Add(_btnBrowseRestoreFile, 2, 0);
             panel.Controls.Add(new Label { Text = "DB mới:", AutoSize = true }, 0, 1);
             panel.Controls.Add(_txtRestoreDb, 1, 1);
+            panel.SetColumnSpan(_txtRestoreDb, 2);
             panel.Controls.Add(new Label { Text = "Thư mục data:", AutoSize = true }, 0, 2);
             panel.Controls.Add(_txtRestoreDataDir, 1, 2);
+            panel.Controls.Add(_btnBrowseRestoreDataDir, 2, 2);
             panel.Controls.Add(new Label { Text = "Thư mục log:", AutoSize = true }, 0, 3);
             panel.Controls.Add(_txtRestoreLogDir, 1, 3);
+            panel.Controls.Add(_btnBrowseRestoreLogDir, 2, 3);
             panel.Controls.Add(new Label { Text = "Tùy chọn:", AutoSize = true }, 0, 4);
             panel.Controls.Add(optRow, 1, 4);
+            panel.SetColumnSpan(optRow, 2);
             var btnRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
             btnRow.Controls.Add(_btnFileList);
             btnRow.Controls.Add(_btnRestore);
@@ -220,12 +394,13 @@ namespace SqlMigrator.UI.Components
             filePanel.Controls.Add(_lstFiles, 0, 0);
             filePanel.Controls.Add(btnRow, 0, 1);
             panel.Controls.Add(filePanel, 1, 5);
+            panel.SetColumnSpan(filePanel, 2);
             return new Panel { Dock = DockStyle.Fill, AutoScroll = true, Controls = { panel } };
         }
 
         private Control BuildSqlitePanel()
         {
-            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
+            var panel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -269,6 +444,27 @@ namespace SqlMigrator.UI.Components
         private void WireEvents()
         {
             _btnBackup.Click += async (_, _) => await RunBackupAsync();
+            _btnBrowseBackupFile.Click += (_, _) => PickBackupFolderOnServer();
+            _btnReloadDbs.Click += async (_, _) => await LoadSourceDatabasesForBackupAsync();
+            _btnCheckAllDbs.Click += (_, _) =>
+            {
+                for (var i = 0; i < _lstBackupDbs.Items.Count; i++) _lstBackupDbs.SetItemChecked(i, true);
+                RefreshBackupFileNameBox();
+            };
+            _btnUncheckAllDbs.Click += (_, _) =>
+            {
+                for (var i = 0; i < _lstBackupDbs.Items.Count; i++) _lstBackupDbs.SetItemChecked(i, false);
+                RefreshBackupFileNameBox();
+            };
+            _lstBackupDbs.ItemCheck += (_, _) => BeginInvoke(new Action(RefreshBackupFileNameBox));
+            _rdoFull.CheckedChanged += (_, _) => RefreshBackupFileNameBox();
+            _rdoDiff.CheckedChanged += (_, _) => RefreshBackupFileNameBox();
+            _btnBrowseRestoreFile.Click += (_, _) =>
+                PickServerFolder(_destEditor, "đích", _txtRestoreFile, keepFileName: true);
+            _btnBrowseRestoreDataDir.Click += (_, _) =>
+                PickServerFolder(_destEditor, "đích", _txtRestoreDataDir, keepFileName: false);
+            _btnBrowseRestoreLogDir.Click += (_, _) =>
+                PickServerFolder(_destEditor, "đích", _txtRestoreLogDir, keepFileName: false);
             _btnFileList.Click += async (_, _) => await LoadBackupFileListAsync();
             _btnRestore.Click += async (_, _) => await RunRestoreAsync();
             _btnSqliteBackup.Click += async (_, _) => await RunSqliteBackupAsync();
@@ -324,19 +520,47 @@ namespace SqlMigrator.UI.Components
         {
             var profile = _sourceEditor.ReadProfile();
             if (profile == null) return;
-            var db = _txtBackupDb.Text.Trim();
-            if (string.IsNullOrWhiteSpace(db))
+            var dbs = GetCheckedBackupDbs();
+            if (dbs.Count == 0)
             {
-                MessageBox.Show("Nhập tên database cần sao lưu (mục Database ở khối nguồn chỉ để lọc, ô này mới là DB sao lưu).",
+                MessageBox.Show("Hãy bấm 'Nạp DS database' rồi check chọn ít nhất 1 database cần sao lưu.",
                     "Sao lưu", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            var file = _txtBackupFile.Text.Trim();
-            if (string.IsNullOrWhiteSpace(file))
+            var folder = _txtBackupFolder.Text.Trim().TrimEnd('\\');
+            if (string.IsNullOrWhiteSpace(folder))
             {
-                MessageBox.Show("Nhập đường dẫn file .bak TRÊN SERVER (VD: D:\\Backup\\db.bak).",
+                MessageBox.Show("Chọn thư mục lưu file .bak TRÊN SERVER (nút 'Chọn…' hoặc gõ tay VD: D:\\Backup).",
                     "Sao lưu", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
+            }
+
+            // Chốt tên file cho từng DB: 1 DB thì theo ô nhập (trống → gợi ý),
+            // nhiều DB thì tự sinh để khỏi trùng. Cùng một mốc giờ cho cả đợt.
+            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var diffSuffix = _rdoDiff.Checked ? "_Diff" : "";
+            var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var db in dbs)
+            {
+                string name;
+                if (dbs.Count == 1)
+                {
+                    name = _txtBackupFileName.Text.Trim();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        name = $"{db}_{stamp}{diffSuffix}.bak";
+                        _txtBackupFileName.Text = name;
+                    }
+                    else if (!name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                    {
+                        name += ".bak";
+                    }
+                }
+                else
+                {
+                    name = $"{db}_{stamp}{diffSuffix}.bak";
+                }
+                files[db] = folder + "\\" + name;
             }
 
             SetBusy(true);
@@ -346,31 +570,39 @@ namespace SqlMigrator.UI.Components
                 var options = BuildDestOptions(profile);
                 var logger = new UiLogger(AppendLog, "Backup");
                 var service = new BackupService(options, logger);
-                var request = new BackupRequest
+                var done = 0;
+                var failed = 0;
+                foreach (var db in dbs)
                 {
-                    Database = db,
-                    BackupFile = file,
-                    FullBackup = _rdoFull.Checked,
-                    Compression = _chkCompression.Checked
-                };
-                AppendLog($"[THÔNG TIN] Bắt đầu sao lưu {db} ra {file} (đường dẫn trên server)...");
-                var progress = new Progress<MigrationProgress>(p =>
-                {
-                    _progressBar.Value = Math.Clamp(p.Percent, 0, 100);
-                    _lblStatus.Text = p.Message;
-                });
-                var result = await service.BackupDatabaseAsync(request, _cts.Token, progress);
-                await BackupHistoryStore.AppendAsync(new BackupHistoryEntry
-                {
-                    AtUtc = DateTime.UtcNow,
-                    Kind = request.FullBackup ? "Sao lưu Full" : "Sao lưu Diff",
-                    Server = profile.Server,
-                    Database = db,
-                    File = file,
-                    Success = result.Success,
-                    Message = result.Success ? $"xong trong {result.Elapsed:mm\\:ss}" : result.Error ?? "lỗi"
-                });
-                _lblStatus.Text = result.Success ? "Sao lưu xong." : "Sao lưu thất bại: " + result.Error;
+                    _cts.Token.ThrowIfCancellationRequested();
+                    var file = files[db];
+                    var request = new BackupRequest
+                    {
+                        Database = db,
+                        BackupFile = file,
+                        FullBackup = _rdoFull.Checked,
+                        Compression = _chkCompression.Checked
+                    };
+                    AppendLog($"[THÔNG TIN] Sao lưu {db} ({done + 1}/{dbs.Count}) ra {file}...");
+                    var result = await service.BackupDatabaseAsync(request, _cts.Token);
+                    done++;
+                    if (!result.Success) failed++;
+                    _progressBar.Value = (int)(done * 100.0 / dbs.Count);
+                    _lblStatus.Text = $"Đã sao lưu {done}/{dbs.Count} database...";
+                    await BackupHistoryStore.AppendAsync(new BackupHistoryEntry
+                    {
+                        AtUtc = DateTime.UtcNow,
+                        Kind = request.FullBackup ? "Sao lưu Full" : "Sao lưu Diff",
+                        Server = profile.Server,
+                        Database = db,
+                        File = file,
+                        Success = result.Success,
+                        Message = result.Success ? $"xong trong {result.Elapsed:mm\\:ss}" : result.Error ?? "lỗi"
+                    });
+                }
+                _lblStatus.Text = failed == 0
+                    ? $"Sao lưu xong {dbs.Count} database."
+                    : $"Sao lưu xong {dbs.Count - failed}/{dbs.Count} database ({failed} lỗi).";
                 await RefreshHistoryAsync();
             }
             catch (OperationCanceledException)

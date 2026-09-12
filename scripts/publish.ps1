@@ -37,7 +37,7 @@ dotnet publish $projectPath -c $configuration -r $rid `
 $exePath = Join-Path $publishFull "SqlMigrator.exe"
 if (Test-Path $exePath) {
     $sizeMB = [math]::Round((Get-Item $exePath).Length / 1MB, 1)
-    Write-Host "✓ Created $exePath ($sizeMB MB)" -ForegroundColor Green
+    Write-Host "[OK] Created $exePath ($sizeMB MB)" -ForegroundColor Green
 } else {
     Write-Error "Executable not found at $exePath"
     exit 1
@@ -54,7 +54,7 @@ $installerDir = Join-Path (Split-Path $projectPath -Parent) "..\..\App\Installer
 $installerExe = Get-ChildItem $installerDir -Filter "*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($installerExe) {
     $sizeMB = [math]::Round($installerExe.Length / 1MB, 1)
-    Write-Host "✓ Created installer: $($installerExe.FullName) ($sizeMB MB)" -ForegroundColor Green
+    Write-Host "[OK] Created installer: $($installerExe.FullName) ($sizeMB MB)" -ForegroundColor Green
 } else {
     Write-Warning "Installer not found in $installerDir"
 }

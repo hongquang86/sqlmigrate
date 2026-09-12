@@ -33,3 +33,17 @@ Nếu xung đột giữa yêu cầu của người dùng và file này, cần l�
 - Chia module: SchemaExtractor, SchemaBuilder, DataCopier, ConstraintManager, Logger, Security.
 - Kiểm thử bằng xUnit hoặc NUnit cho các thành phần lõi.
 - Mọi thay đổi phải chạy được `dotnet build` và kiểm thử trước khi kết thúc phiên nếu có thể.
+
+## 6. Nhật ký phiên làm việc (12/09/2026 — Pha 3 hoàn thiện)
+- Phạm vi: hoàn thiện Pha 3 (mover chéo SQL Server ↔ PostgreSQL ↔ SQLite) + sửa UI
+  tab Sao lưu/Khôi phục và ConnectionEditor. Không đụng Reconcile, không mở Pha 4+.
+- Core: `MigrationGuard` mở full cặp relational; `PostgresEndpoint.ListDatabasesAsync`;
+  mover generic nên chiều ngược (PG/SQLite → SQL) chạy chung một đường code.
+- UI Migrate: `RunCrossEngineMigrationAsync`, `NormalizeSqliteProfile`, probe mật khẩu
+  chỉ trong bộ nhớ; UI Backup: layout 2 cột đúng, panel Dock=Top để scroll thật,
+  nút "Chọn…" duyệt disk server (nguồn/đích), sao lưu multi-DB checkbox + tên file
+  `<DB>_yyyyMMdd_HHmmss[_Diff].bak`; `ConnectionEditor`: Hệ CSDL textbox hiển thị
+  engine detect + tự điền Port, auto-detect cả Connect DB lẫn Kiểm tra kết nối.
+- Kiểm chứng: `dotnet build` 0 Warning/0 Error; `dotnet test` 376/376 pass
+  (khóa chiều ngược trong `CanonicalDdlTests`); publish + installer + ClickToRun zip.
+- Quy ước: mọi commit/push chỉ khi user yêu cầu tường minh.

@@ -1135,7 +1135,8 @@ SELECT OBJECT_SCHEMA_NAME(c.object_id), OBJECT_NAME(c.object_id),
        CAST(CASE WHEN TYPE_NAME(c.user_type_id) IN ('timestamp','rowversion') THEN 1 ELSE 0 END AS bit) AS is_rowversion,
        CAST(ISNULL((SELECT 1 FROM sys.index_columns ic
                 JOIN sys.indexes ix ON ix.object_id = ic.object_id AND ix.index_id = ic.index_id AND ix.is_primary_key = 1
-               WHERE ic.object_id = c.object_id AND ic.column_id = c.column_id), 0) AS bit) AS is_pk
+               WHERE ic.object_id = c.object_id AND ic.column_id = c.column_id), 0) AS bit) AS is_pk,
+       c.max_length, c.precision, c.scale
   FROM sys.columns c
  ORDER BY OBJECT_ID(c.object_id), c.column_id;";
 
@@ -1158,7 +1159,10 @@ SELECT OBJECT_SCHEMA_NAME(c.object_id), OBJECT_NAME(c.object_id),
                         IsIdentity = reader.GetBoolean(5),
                         IsNullable = reader.GetBoolean(6),
                         IsRowVersion = reader.GetBoolean(7),
-                        IsPrimaryKey = reader.GetBoolean(8)
+                        IsPrimaryKey = reader.GetBoolean(8),
+                        MaxLength = reader.GetInt16(9),
+                        Precision = reader.GetByte(10),
+                        Scale = reader.GetByte(11)
                     };
 
                     table.AddColumn(column);

@@ -3,9 +3,12 @@ using System.Drawing;
 using System.IO.Compression;
 using System.Reflection;
 using System.Windows.Forms;
+using SqlMigrator.Core.Interfaces;
 using SqlMigrator.Core.Models;
 using SqlMigrator.Core.Security;
 using SqlMigrator.Core.Services;
+using SqlMigrator.Core.Services.DataMove;
+using SqlMigrator.Core.Services.DbProviders;
 using SqlMigrator.UI.Components;
 using SqlMigrator.UI.Models;
 using SqlMigrator.UI.Services;
@@ -157,6 +160,27 @@ namespace SqlMigrator.UI
                 var destProfile = editor.ReadProfile();
                 if (destProfile == null)
                     return "Vui lòng nhập đầy đủ thông tin server đích (server, xác thực, tên database mới).";
+                // SQLite đích: "tạo DB" = tạo file .db trống (file rỗng là database SQLite hợp lệ).
+                if (EngineInfo.ParseEngine(destProfile.Engine) == DatabaseEngine.Sqlite)
+                {
+                    try
+                    {
+                        var path = destProfile.Server.Trim();
+                        if (string.IsNullOrWhiteSpace(path))
+                            return "Vui lòng chọn đường dẫn file SQLite (.db) ở ô 'File SQLite' trước.";
+                        if (System.IO.File.Exists(path))
+                            return string.Empty;
+                        var dir = System.IO.Path.GetDirectoryName(path);
+                        if (!string.IsNullOrEmpty(dir))
+                            System.IO.Directory.CreateDirectory(dir);
+                        using (System.IO.File.Create(path)) { }
+                        return string.Empty;
+                    }
+                    catch (Exception ex)
+                    {
+                        return "Không tạo được file SQLite: " + ex.Message;
+                    }
+                }
                 var sourceProfile = _sourceEditor.ReadProfile();
                 if (sourceProfile == null)
                     return "Vui lòng nhập thông tin server nguồn (dùng để lấy collation cho database đích).";
@@ -776,6 +800,14 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             _ => type.ToString()
         };
 
+        /// <summary>SQLite không có khái niệm database riêng — dùng đường dẫn file làm Database.</summary>
+        private static void NormalizeSqliteProfile(ConnectionProfile profile)
+        {
+            if (EngineInfo.ParseEngine(profile.Engine) == DatabaseEngine.Sqlite
+                && string.IsNullOrWhiteSpace(profile.Database))
+                profile.Database = profile.Server.Trim();
+        }
+
         private bool TryBuildOptions(out MigrationOptions options, out ConnectionProfile source, out ConnectionProfile dest)
         {
             options = null!;
@@ -788,6 +820,10 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             var d = _destEditor.ReadProfile();
             if (d == null) return false;
             dest = d;
+
+            // SQLite: database chính là file — Database rỗng thì lấy đường dẫn ở ô Server.
+            NormalizeSqliteProfile(source);
+            NormalizeSqliteProfile(dest);
 
             if (string.IsNullOrWhiteSpace(source.Database))
             {
@@ -1124,6 +1160,16 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
         private async Task StartMigrationAsync()
         {
             if (!TryBuildOptions(out var options, out var source, out var dest)) return;
+
+            // Di chuyển chéo engine (Pha 3+): luồng riêng, không qua provisioner SQL.
+            var srcEngine = EngineInfo.ParseEngine(source.Engine);
+            var dstEngine = EngineInfo.ParseEngine(dest.Engine);
+            if (srcEngine != DatabaseEngine.SqlServer || dstEngine != DatabaseEngine.SqlServer)
+            {
+                await RunCrossEngineMigrationAsync(source, dest, srcEngine, dstEngine);
+                return;
+            }
+
             if (!await EnsureDestinationDatabaseAsync(options)) return;
             await NormalizeConnectionStringsAsync(options);
 
@@ -1216,6 +1262,123 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 UpdateSyncButtons();
                 _cts.Dispose();
                 _cts = null;
+            }
+        }
+
+        /// <summary>
+        /// Chạy di chuyển chéo engine (Pha 3+): đọc schema chuẩn từ nguồn, dựng bảng
+        /// tương đương trên đích, chép từng batch có chuyển kiểu, đối chiếu số dòng.
+        /// Nguồn CHỈ ĐỌC. Mật khẩu chỉ tồn tại trong bộ nhớ, không log/lưu.
+        /// </summary>
+        private async Task RunCrossEngineMigrationAsync(
+            ConnectionProfile source, ConnectionProfile dest,
+            DatabaseEngine srcEngine, DatabaseEngine dstEngine)
+        {
+            var refused = MigrationGuard.EnsureSupportedEngines(source.Engine, dest.Engine);
+            if (refused != null)
+            {
+                MessageBox.Show(refused, "Cặp engine chưa hỗ trợ",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                $"Di chuyển chéo engine {srcEngine} → {dstEngine}?\n" +
+                $"Nguồn: {source.Server} / {source.Database}\n" +
+                $"Đích: {dest.Server} / {dest.Database}\n\n" +
+                "Lưu ý: kiểu dữ liệu được chuyển đổi tương đương, index phụ không di chuyển, " +
+                "bảng đã tồn tại trên đích sẽ bị bỏ qua (trừ khi bật 'Xóa dữ liệu đích trước').",
+                "Xác nhận di chuyển chéo", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes) return;
+
+            DbProbe BuildProbe(ConnectionProfile p, string plainPassword) => new()
+            {
+                Host = p.Server,
+                Port = p.Port,
+                Database = p.Database,
+                User = p.UserName,
+                Password = plainPassword,
+                UseWindowsAuth = p.Authentication == AuthenticationMode.Windows
+            };
+            var srcProbe = BuildProbe(source, _sourceEditor.GetPlainPassword());
+            var dstProbe = BuildProbe(dest, _destEditor.GetPlainPassword());
+            var crossOptions = new CrossEngineOptions
+            {
+                OverwriteExistingTables = _chkTruncate.Checked,
+                BatchRows = (int)_numBatchSize.Value
+            };
+
+            SetBusy(true);
+            _txtLog.Clear();
+            _cts = new CancellationTokenSource();
+            try
+            {
+                var progress = new Progress<MigrationProgress>(p =>
+                {
+                    _progressBar.Value = Math.Clamp(p.Percent, 0, 100);
+                    _lblStatus.Text = p.Message;
+                    AppendLog(p.Message);
+                });
+
+                AppendLog($"— DI CHUYỂN CHÉO {srcEngine} → {dstEngine} —");
+                var logger = new UiLogger(AppendLog, "CrossEngine");
+                var service = new CrossEngineMigrationService(logger);
+                var result = await service.MigrateAsync(
+                    srcProbe, srcEngine, dstProbe, dstEngine,
+                    crossOptions, _cts.Token, progress);
+
+                var failed = 0;
+                var skipped = 0;
+                foreach (var t in result.Tables)
+                {
+                    if (t.Errors.Count > 0)
+                    {
+                        failed++;
+                        AppendLog($"[LỖI] {t.Table}: {string.Join("; ", t.Errors)}");
+                    }
+                    else if (t.Skipped)
+                    {
+                        skipped++;
+                        AppendLog($"[BỎ QUA] {t.Table}: {t.SkipReason}");
+                    }
+                    else
+                    {
+                        AppendLog($"[XONG] {t.Table}: {t.RowsCopied:N0} dòng.");
+                        foreach (var w in t.Warnings) AppendLog($"[CẢNH BÁO] {t.Table}: {w}");
+                    }
+                }
+                foreach (var w in result.Warnings) AppendLog("[CẢNH BÁO] " + w);
+                AppendLog($"— XONG sau {result.Elapsed}: {result.Tables.Count} bảng, " +
+                    $"{result.TotalRows:N0} dòng, {failed} lỗi, {skipped} bỏ qua —");
+
+                _lblStatus.Text = result.Success
+                    ? $"Di chuyển chéo xong: {result.TotalRows:N0} dòng."
+                    : $"Di chuyển chéo xong có {failed} bảng lỗi.";
+                MessageBox.Show(
+                    $"Bảng: {result.Tables.Count} (xong {result.Tables.Count - failed - skipped}, " +
+                    $"bỏ qua {skipped}, lỗi {failed})\n" +
+                    $"Tổng dòng đã chép: {result.TotalRows:N0}\n" +
+                    $"Thời gian: {result.Elapsed}\n\n" +
+                    "Chi tiết từng bảng xem trong khung nhật ký.",
+                    result.Success ? "Di chuyển chéo xong" : "Di chuyển chéo có lỗi",
+                    MessageBoxButtons.OK,
+                    result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            catch (OperationCanceledException)
+            {
+                _lblStatus.Text = "Đã hủy di chuyển chéo.";
+                AppendLog("[THÔNG TIN] Đã hủy bởi người dùng.");
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "Lỗi: " + ex.Message;
+                AppendLog("[LỖI] " + ex);
+            }
+            finally
+            {
+                SetBusy(false);
+                _cts.Dispose();
+                _cts = null!;
             }
         }
 

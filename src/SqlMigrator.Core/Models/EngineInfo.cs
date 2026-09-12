@@ -14,7 +14,7 @@ namespace SqlMigrator.Core.Models
         public int MajorVersion { get; init; }
         /// <summary>Biến thể cùng protocol, VD: "MariaDB" cho engine MySql.</summary>
         public string Variant { get; init; } = string.Empty;
-        /// <summary>Engine này đã di chuyển được chưa (Pha 1: chỉ SQL Server).</summary>
+        /// <summary>Engine này đã tham gia ít nhất một cặp di chuyển được hỗ trợ chưa (xem MigrationGuard).</summary>
         public bool SupportsMigration { get; init; }
 
         /// <summary>Mô tả một dòng cho log/giao diện.</summary>

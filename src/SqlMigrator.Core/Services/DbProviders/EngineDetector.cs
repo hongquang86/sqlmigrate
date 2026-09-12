@@ -69,7 +69,8 @@ namespace SqlMigrator.Core.Services.DbProviders
     }
 
     /// <summary>
-    /// Chốt chặn chạy migrate: Pha 1 chỉ cho SQL Server ↔ SQL Server.
+    /// Chốt chặn chạy migrate: Pha 1 chỉ cho SQL Server ↔ SQL Server; Pha 3 mở thêm
+    /// các cặp quan hệ được hỗ trợ (SQLite/PostgreSQL chéo nhau và với SQL Server).
     /// Thuần logic để dễ kiểm thử; orchestrator gọi trước mọi pha ghi.
     /// </summary>
     public static class MigrationGuard
@@ -79,12 +80,27 @@ namespace SqlMigrator.Core.Services.DbProviders
         {
             var src = EngineInfo.ParseEngine(sourceEngine);
             var dst = EngineInfo.ParseEngine(destinationEngine);
-            if (src == DatabaseEngine.SqlServer && dst == DatabaseEngine.SqlServer)
+            if (IsSupportedPair(src, dst))
                 return null;
-            return $"Cặp engine {Describe(src)} → {Describe(dst)} chưa di chuyển được ở bản này "
-                + "(hiện chỉ hỗ trợ SQL Server ↔ SQL Server). "
-                + "Hãy chọn lại 2 đầu SQL Server hoặc chờ các pha engine tiếp theo.";
+            return $"Cặp engine {Describe(src)} → {Describe(dst)} chưa di chuyển được ở bản này. "
+                + "Các engine hỗ trợ đi với nhau mọi chiều: SQL Server, PostgreSQL, SQLite. "
+                + "Hãy chọn lại cặp được hỗ trợ hoặc chờ các pha engine tiếp theo.";
         }
+
+        /// <summary>Cặp engine đã chạy migrate được chưa (đối xứng).</summary>
+        public static bool IsSupportedPair(DatabaseEngine source, DatabaseEngine destination)
+        {
+            if (!IsRelational(source) || !IsRelational(destination))
+                return false;
+            // Mọi cặp trong {SQL Server, PostgreSQL, SQLite} đều chạy được:
+            // cùng engine, SQLite đi với mọi engine quan hệ, và SQL Server ↔ PostgreSQL.
+            return true;
+        }
+
+        private static bool IsRelational(DatabaseEngine engine) =>
+            engine == DatabaseEngine.SqlServer
+            || engine == DatabaseEngine.PostgreSql
+            || engine == DatabaseEngine.Sqlite;
 
         private static string Describe(DatabaseEngine engine) => engine switch
         {
