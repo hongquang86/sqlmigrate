@@ -1438,6 +1438,8 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             grid.Columns.Add("ObjectName", "Đối tượng");
             grid.Columns.Add("ObjectType", "Loại");
             grid.Columns.Add("Severity", "Mức độ");
+            grid.Columns.Add("Created", "Ngày tạo");
+            grid.Columns.Add("LastUsed", "Dùng lần cuối");
             grid.Columns.Add("Description", "Mô tả");
             grid.Columns.Add("SuggestedAction", "Gợi ý xử lý");
             grid.Columns.Add("CanAutoFix", "Tự fix");
@@ -1469,6 +1471,8 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                     issue.ObjectName,
                     GetObjectTypeDisplay(issue.ObjectType),
                     GetSeverityDisplay(issue.Severity),
+                    ModuleUsageText.FormatCreatedDate(issue.CreatedDate),
+                    ModuleUsageText.FormatLastUsed(issue.LastUsedDate),
                     issue.Description,
                     issue.SuggestedAction,
                     issue.CanAutoFix ? "✔" : "✘");
@@ -1533,6 +1537,9 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
                 };
                 AppendLog($"  [{tag}] {issue.ObjectName} ({GetObjectTypeDisplay(issue.ObjectType)}): {issue.Description}");
                 AppendLog($"    → Gợi ý: {issue.SuggestedAction}");
+                var usageLine = ModuleUsageText.FormatUsageLogLine(issue);
+                if (!string.IsNullOrEmpty(usageLine))
+                    AppendLog($"    → Độ dùng: {usageLine}");
                 if (issue.UnsupportedRules.Count > 0)
                     AppendLog($"    → Không hỗ trợ: {string.Join(", ", issue.UnsupportedRules)}");
                 if (issue.HasTriedCreate && !issue.CreateSucceeded)
@@ -1948,7 +1955,8 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
         }
 
         private static string GetObjectTypeDisplay(string type) => type switch
-        {            "TABLE" => "Bảng",
+        {
+            "TABLE" => "Bảng",
             "VIEW" => "View",
             "STORED_PROCEDURE" => "Stored Procedure",
             "FUNCTION" => "Function",

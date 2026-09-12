@@ -115,6 +115,11 @@ namespace SqlMigrator.Core.Services
                 progress?.Report(new MigrationProgress(70, "Đang kiểm tra dependency..."));
                 AnalyzeBrokenDependencies(schema, dest, result);
 
+                // 5b) Tra cứu độ dùng view/SP/function (ngày tạo + lần chạy cuối,
+                // chỉ SELECT nguồn) để user biết object lỗi có đáng giữ không.
+                progress?.Report(new MigrationProgress(78, "Đang tra cứu độ dùng module..."));
+                await AnalyzeModuleUsageAsync(result, ct).ConfigureAwait(false);
+
                 // 6) Đọc thống kê dữ liệu (chỉ SELECT COUNT).
                 progress?.Report(new MigrationProgress(85, "Đang đọc thống kê dữ liệu..."));
                 await AnalyzeDataDifferencesAsync(schema, dest, result, progress, ct).ConfigureAwait(false);
@@ -927,6 +932,48 @@ namespace SqlMigrator.Core.Services
                     }).ToList();
                     _logger.LogWarning("'{Name}' tham chiếu database khác: {Refs}.",
                         issue.ObjectName, string.Join(", ", crossDbs));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Tra cứu độ dùng view/SP/function thiếu (ngày tạo + lần chạy cuối, chỉ SELECT
+        /// nguồn) rồi ghi gợi ý bỏ qua khi object lỗi mà chưa từng thấy dùng.
+        /// Không bao giờ tự bỏ qua — chỉ thêm thông tin để user quyết định.
+        /// </summary>
+        private async Task AnalyzeModuleUsageAsync(ReconcileResult result, CancellationToken ct)
+        {
+            var modules = result.Issues
+                .Where(i => i.Type == ReconcileIssueType.MissingObject
+                    && i.ObjectType is "VIEW" or "STORED_PROCEDURE" or "FUNCTION")
+                .ToList();
+            if (modules.Count == 0)
+                return;
+
+            await new ModuleUsageReader(_logger)
+                .FillAsync(_options.SourceConnectionString, modules, ct).ConfigureAwait(false);
+
+            foreach (var issue in modules)
+            {
+                if (issue.CreatedDate == null && issue.UseCount == null && issue.LastUsedDate == null)
+                    continue;
+
+                var usedText = issue.LastUsedDate != null
+                    ? "dùng lần cuối " + issue.LastUsedDate.Value.ToString("dd/MM/yyyy HH:mm")
+                        + (issue.UseCount != null ? $" ({issue.UseCount:N0} lần)" : "")
+                        + " theo " + (issue.UsageEvidence ?? "nguồn chứng cứ")
+                    : "chưa từng thấy dùng"
+                        + (issue.UsageEvidence != null ? " theo " + issue.UsageEvidence : "");
+                var createdText = issue.CreatedDate != null
+                    ? "tạo từ " + issue.CreatedDate.Value.ToString("dd/MM/yyyy")
+                    : "không rõ ngày tạo";
+                _logger.LogInformation("'{Name}': {Created}, {Used}.",
+                    issue.ObjectName, createdText, usedText);
+
+                if (issue.LastUsedDate == null && issue.UsageEvidence != null)
+                {
+                    issue.SuggestedAction += $" Độ dùng: {createdText} nhưng {usedText} — "
+                        + "nếu nghiệp vụ xác nhận không dùng nữa thì có thể bỏ qua object này.";
                 }
             }
         }

@@ -127,6 +127,27 @@ namespace SqlMigrator.Core.Models
 
         /// <summary>Tạo thành công trên đích chưa.</summary>
         public bool CreateSucceeded { get; set; }
+
+        /// <summary>Ngày tạo object trên nguồn (sys.objects, chỉ SELECT).</summary>
+        public DateTime? CreatedDate { get; set; }
+
+        /// <summary>Ngày sửa gần nhất trên nguồn (sys.objects, chỉ SELECT).</summary>
+        public DateTime? ModifiedDate { get; set; }
+
+        /// <summary>
+        /// Tổng số lần chạy ghi nhận được (Query Store, gộp plan cache).
+        /// Null = không có dữ liệu (server tắt QS + không đọc được cache).
+        /// </summary>
+        public long? UseCount { get; set; }
+
+        /// <summary>Lần chạy gần nhất ghi nhận được. Null = chưa từng thấy dùng.</summary>
+        public DateTime? LastUsedDate { get; set; }
+
+        /// <summary>
+        /// Nguồn chứng cứ độ dùng: "Query Store", "plan cache", hoặc null
+        /// (chưa tra được). Dùng để diễn giải LastUsedDate trung thực.
+        /// </summary>
+        public string? UsageEvidence { get; set; }
     }
 
     /// <summary>
