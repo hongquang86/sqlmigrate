@@ -20,8 +20,7 @@ namespace SqlMigrator.UI.Components
         private readonly ConnectionEditor _sourceEditor;
         private readonly ConnectionEditor _destEditor;
 
-        private readonly TextBox _txtBackupFolder = new() { Dock = DockStyle.Fill };
-        private readonly TextBox _txtBackupFileName = new() { Dock = DockStyle.Fill };
+        private readonly TextBox _txtBackupFolder = new() { Dock = DockStyle.Fill };        private readonly TextBox _txtBackupFileName = new() { Dock = DockStyle.Fill };
         private readonly Button _btnBrowseBackupFile = new() { Text = "Chọn…", AutoSize = true };
         private readonly CheckedListBox _lstBackupDbs = new() { Dock = DockStyle.Fill, Height = 84, CheckOnClick = true };
         private readonly Button _btnReloadDbs = new() { Text = "Nạp DS database", AutoSize = true };
@@ -31,6 +30,7 @@ namespace SqlMigrator.UI.Components
         private readonly RadioButton _rdoDiff = new() { Text = "Chênh lệch (Diff)", AutoSize = true };
         private readonly CheckBox _chkCompression = new() { Text = "Nén backup", Checked = true, AutoSize = true };
         private readonly Button _btnBackup = new() { Text = "Sao lưu ngay", AutoSize = true };
+        private readonly Button _btnSchedule = new() { Text = "Lập lịch...", AutoSize = true };
 
         private readonly TextBox _txtRestoreFile = new() { Dock = DockStyle.Fill };
         private readonly TextBox _txtRestoreDb = new() { Dock = DockStyle.Fill };
@@ -218,8 +218,38 @@ namespace SqlMigrator.UI.Components
             panel.Controls.Add(new Label { Text = "Loại:", AutoSize = true }, 0, 4);
             panel.Controls.Add(typeRow, 1, 4);
             panel.SetColumnSpan(typeRow, 2);
-            panel.Controls.Add(_btnBackup, 1, 5);
+            var runRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            runRow.Controls.Add(_btnBackup);
+            runRow.Controls.Add(_btnSchedule);
+            panel.Controls.Add(runRow, 1, 5);
+            panel.SetColumnSpan(runRow, 2);
             return new Panel { Dock = DockStyle.Fill, AutoScroll = true, Controls = { panel } };
+        }
+
+        /// <summary>
+        /// Mở hộp lập lịch sao lưu tự động với đúng DB đang check + thư mục + loại
+        /// trên màn hình (đỡ nhập lại). Job lưu profile nguồn để Task Scheduler chạy headless.
+        /// </summary>
+        private void OpenScheduleDialog()
+        {
+            var profile = _sourceEditor.ReadProfile();
+            if (profile == null) return;
+            if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer)
+            {
+                MessageBox.Show("Lập lịch tự động mới hỗ trợ SQL Server.",
+                    "Chưa hỗ trợ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var dbs = GetCheckedBackupDbs();
+            if (dbs.Count == 0)
+            {
+                MessageBox.Show("Hãy bấm 'Nạp DS database' rồi check chọn ít nhất 1 database.",
+                    "Lập lịch", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            using var dlg = new BackupScheduleDialog(profile, dbs,
+                _txtBackupFolder.Text.Trim(), _rdoFull.Checked, _builder, AppendLog);
+            dlg.ShowDialog(this);
         }
 
         /// <summary>
@@ -444,6 +474,7 @@ namespace SqlMigrator.UI.Components
         private void WireEvents()
         {
             _btnBackup.Click += async (_, _) => await RunBackupAsync();
+            _btnSchedule.Click += (_, _) => OpenScheduleDialog();
             _btnBrowseBackupFile.Click += (_, _) => PickBackupFolderOnServer();
             _btnReloadDbs.Click += async (_, _) => await LoadSourceDatabasesForBackupAsync();
             _btnCheckAllDbs.Click += (_, _) =>

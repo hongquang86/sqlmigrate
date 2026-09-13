@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SqlMigrator.Core.Security;
 using SqlMigrator.UI;
 
@@ -11,8 +12,13 @@ static class Program
     ///  service rồi chạy cửa sổ chính.
     /// </summary>
     [STAThread]
-    static void Main()
+    static int Main(string[] args)
     {
+        // Chế độ headless cho Task Scheduler: SqlMigrator.exe --run-backup <jobId>
+        // chạy job rồi thoát với mã lỗi, không mở giao diện.
+        if (args.Length >= 2 && args[0].Equals("--run-backup", StringComparison.OrdinalIgnoreCase))
+            return RunBackupJob(args[1]);
+
         ApplicationConfiguration.Initialize();
 
         var services = new ServiceCollection();
@@ -26,5 +32,25 @@ static class Program
 
         using var provider = services.BuildServiceProvider();
         Application.Run(provider.GetRequiredService<MainForm>());
+        return 0;
+    }
+
+    /// <summary>Chạy job sao lưu headless, log ra file theo ngày (không log secret).</summary>
+    private static int RunBackupJob(string jobId)
+    {
+        var logPath = Core.Services.Backup.BackupJobRunner.LogFilePath();
+        var logger = new Core.Services.SqlMigratorLogger(logPath, "BackupJob");
+        try
+        {
+            var protector = new DpapiDataProtector();
+            var builder = new SecureConnectionStringBuilder(protector);
+            var runner = new Core.Services.Backup.BackupJobRunner(protector, builder, logger);
+            return runner.RunAsync(jobId).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Chạy job sao lưu thất bại.");
+            return 1;
+        }
     }
 }

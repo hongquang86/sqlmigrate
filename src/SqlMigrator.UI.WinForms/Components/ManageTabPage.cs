@@ -1,6 +1,7 @@
 using SqlMigrator.Core.Interfaces;
 using SqlMigrator.Core.Models;
 using SqlMigrator.Core.Security;
+using SqlMigrator.Core.Services;
 using SqlMigrator.Core.Services.DbProviders;
 using SqlMigrator.Core.Services.Manage;
 using SqlMigrator.UI.Services;
@@ -33,6 +34,32 @@ namespace SqlMigrator.UI.Components
         private readonly TextBox _txtMongoRestore = new() { Dock = DockStyle.Fill, PlaceholderText = "mongorestore (qua PATH)" };
         private readonly Button _btnMongoBackup = new() { Text = "Sao lưu MongoDB", AutoSize = true };
         private readonly Button _btnMongoRestore = new() { Text = "Khôi phục MongoDB", AutoSize = true };
+        private readonly TextBox _txtSvcMachine = new() { Dock = DockStyle.Fill };
+        private readonly ComboBox _cmbService = new() { Width = 320 };
+        private readonly Button _btnSvcQuery = new() { Text = "Xem trạng thái", AutoSize = true };
+        private readonly Label _lblSvcState = new() { Text = "Chưa kiểm tra.", AutoSize = true };
+        private readonly Button _btnSvcStart = new() { Text = "Start", AutoSize = true };
+        private readonly Button _btnSvcStop = new() { Text = "Stop", AutoSize = true };
+        private readonly Button _btnSvcRestart = new() { Text = "Restart", AutoSize = true };
+        private readonly TextBox _txtQuery = new();
+        private readonly DataGridView _dgvQueryResult = new();
+        private readonly Button _btnQueryRun = new() { Text = "Chạy truy vấn", AutoSize = true };
+        private readonly Label _lblQueryStatus = new() { Text = "Tối đa 5000 dòng.", AutoSize = true };
+        private readonly ConnectionEditor _cmpSource;
+        private readonly ConnectionEditor _cmpDest;
+        private readonly Button _btnCompare = new() { Text = "Đối chiếu ngay", AutoSize = true };
+        private readonly DataGridView _dgvCompare = new();
+        private readonly TextBox _txtSrvFolder = new() { Dock = DockStyle.Fill };
+        private readonly Button _btnSrvBrowse = new() { Text = "Chọn…", AutoSize = true };
+        private readonly Button _btnSrvList = new() { Text = "Liệt kê file", AutoSize = true };
+        private readonly DataGridView _dgvSrvFiles = new();
+        private readonly TextBox _txtLocalFolder = new() { Dock = DockStyle.Fill };
+        private readonly Button _btnLocalBrowse = new() { Text = "Chọn…", AutoSize = true };
+        private readonly Button _btnLocalList = new() { Text = "Nạp file", AutoSize = true };
+        private readonly Button _btnLocalDelete = new() { Text = "Xóa file đã chọn", AutoSize = true };
+        private readonly DataGridView _dgvLocalFiles = new();
+        private readonly DataGridView _dgvOpsLog = new();
+        private readonly Button _btnOpsReload = new() { Text = "Tải lại", AutoSize = true };
 
         public ManageTabPage(
             IDataProtector protector, IConnectionProfileStore profileStore, SecureConnectionStringBuilder builder)
@@ -47,8 +74,19 @@ namespace SqlMigrator.UI.Components
             _editor.ConnTester = async p => await DatabaseCatalog.TestConnectionAsync(p, _builder);
             _editor.LogSink = msg => _lblStatus.Text = msg;
 
+            _cmpSource = new ConnectionEditor(protector, profileStore, builder, "cmp-src");
+            _cmpDest = new ConnectionEditor(protector, profileStore, builder, "cmp-dst");
+            foreach (var cmp in new[] { _cmpSource, _cmpDest })
+            {
+                cmp.DatabaseFetcher = async p => await DatabaseCatalog.GetDatabasesAsync(p, _builder);
+                cmp.ConnTester = async p => await DatabaseCatalog.TestConnectionAsync(p, _builder);
+                cmp.LogSink = msg => _lblStatus.Text = msg;
+                cmp.Dock = DockStyle.Fill;
+            }
+
             BuildLayout();
             WireEvents();
+            _ = RefreshOpsLogAsync();
         }
 
         private void BuildLayout()
@@ -78,26 +116,387 @@ namespace SqlMigrator.UI.Components
             sessPanel.Controls.Add(sessButtons, 0, 1);
             sessGroup.Controls.Add(sessPanel);
 
-            var middle = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+            var middle = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1, Height = 300 };
             middle.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
             middle.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58F));
             middle.Controls.Add(dbGroup, 0, 0);
             middle.Controls.Add(sessGroup, 1, 0);
 
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
+            // Chồng các nhóm theo chiều dọc trong panel cuộn: thêm bao nhiêu nhóm
+            // cũng không xén (bài học từ group Khôi phục tab Backup).
+            var stack = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+            stack.Controls.Add(middle, 0, 0);
+            var routine = BuildRoutineGroup();
+            routine.Height = 260;
+            routine.Dock = DockStyle.Top;
+            stack.Controls.Add(routine, 0, 1);
+            stack.Controls.Add(BuildServiceGroup(), 0, 2);
+            stack.Controls.Add(BuildQueryGroup(), 0, 3);
+            stack.Controls.Add(BuildMongoDumpGroup(), 0, 4);
+            stack.Controls.Add(BuildCompareGroup(), 0, 5);
+            stack.Controls.Add(BuildFileGroup(), 0, 6);
+            stack.Controls.Add(BuildOpsLogGroup(), 0, 7);
+            var scroller = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+            scroller.Controls.Add(stack);
+
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 40F));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 30F));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.Controls.Add(connGroup, 0, 0);
-            root.Controls.Add(middle, 0, 1);
-            root.Controls.Add(BuildRoutineGroup(), 0, 2);
-            root.Controls.Add(BuildMongoDumpGroup(), 0, 3);
-            root.Controls.Add(_lblStatus, 0, 4);
+            root.Controls.Add(scroller, 0, 1);
+            root.Controls.Add(_lblStatus, 0, 2);
             Controls.Add(root);
         }
 
+        /// <summary>
+        /// Nhóm vận hành service database: Start/Stop/Restart service Windows của
+        /// SQL Server/PostgreSQL/MySQL/MongoDB (qua sc.exe, local hoặc \\máy).
+        /// Cần quyền admin trên máy chứa service; lỗi hiện nguyên văn.
+        /// </summary>
+        private Control BuildServiceGroup()
+        {
+            var group = new GroupBox
+            {
+                Text = "6. Vận hành service database (Start / Stop / Restart)",
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(6)
+            };
+            var panel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            panel.Controls.Add(new Label { Text = "Máy (trống = máy này):", AutoSize = true }, 0, 0);
+            panel.Controls.Add(_txtSvcMachine, 1, 0);
+            panel.Controls.Add(new Label { Text = "Service:", AutoSize = true }, 0, 1);
+            var svcRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true };
+            foreach (var known in ServiceControlService.KnownServices)
+                _cmbService.Items.Add(known.Name + " — " + known.Label);
+            if (_cmbService.Items.Count > 0)
+                _cmbService.SelectedIndex = 0;
+            svcRow.Controls.Add(_cmbService);
+            svcRow.Controls.Add(_btnSvcQuery);
+            panel.Controls.Add(svcRow, 1, 1);
+            panel.Controls.Add(new Label { Text = "Trạng thái:", AutoSize = true }, 0, 2);
+            panel.Controls.Add(_lblSvcState, 1, 2);
+            var row = new FlowLayoutPanel { AutoSize = true, WrapContents = true };
+            row.Controls.Add(_btnSvcStart);
+            row.Controls.Add(_btnSvcStop);
+            row.Controls.Add(_btnSvcRestart);
+            panel.Controls.Add(new Label { Text = "Điều khiển:", AutoSize = true }, 0, 3);
+            panel.Controls.Add(row, 1, 3);
+            group.Controls.Add(panel);
+            return group;
+        }
+
+        /// <summary>Nhóm hộp truy vấn SQL + lưới kết quả (tối đa 5000 dòng).</summary>
+        private Control BuildQueryGroup()
+        {
+            var group = new GroupBox
+            {
+                Text = "7. Truy vấn SQL",
+                Dock = DockStyle.Top,
+                Padding = new Padding(6),
+                Height = 320
+            };
+            _txtQuery.Multiline = true;
+            _txtQuery.ScrollBars = ScrollBars.Both;
+            _txtQuery.Font = new Font("Consolas", 9.5F);
+            _txtQuery.Dock = DockStyle.Fill;
+            _txtQuery.Text = "SELECT 1;";
+            _dgvQueryResult.Dock = DockStyle.Fill;
+            _dgvQueryResult.AllowUserToAddRows = false;
+            _dgvQueryResult.ReadOnly = true;
+            _dgvQueryResult.RowHeadersVisible = false;
+            _dgvQueryResult.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
+            var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterWidth = 6 };
+            split.Panel1.Controls.Add(_txtQuery);
+            split.Panel2.Controls.Add(_dgvQueryResult);
+            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            panel.Controls.Add(split, 0, 0);
+            var row = new FlowLayoutPanel { AutoSize = true, WrapContents = true };
+            row.Controls.Add(_btnQueryRun);
+            row.Controls.Add(_lblQueryStatus);
+            panel.Controls.Add(row, 0, 1);
+            group.Controls.Add(panel);
+            return group;
+        }
+
+        /// <summary>
+        /// Nhóm 8: đối chiếu nhanh 2 database (kể cả khác engine) — liệt kê bảng
+        /// bên nguồn rồi đếm dòng từng bảng 2 bên. Chỉ đọc, không chép dữ liệu.
+        /// </summary>
+        private Control BuildCompareGroup()
+        {
+            var group = new GroupBox
+            {
+                Text = "8. Đối chiếu nhanh 2 database (số dòng từng bảng)",
+                Dock = DockStyle.Top,
+                Padding = new Padding(6),
+                Height = 340
+            };
+            var srcBox = new GroupBox { Text = "Nguồn", Dock = DockStyle.Fill };
+            srcBox.Controls.Add(_cmpSource);
+            var dstBox = new GroupBox { Text = "Đích", Dock = DockStyle.Fill };
+            dstBox.Controls.Add(_cmpDest);
+            var editors = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1, Height = 150 };
+            editors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            editors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            editors.Controls.Add(srcBox, 0, 0);
+            editors.Controls.Add(dstBox, 1, 0);
+            SetupGrid(_dgvCompare, "Bảng", "Dòng nguồn", "Dòng đích", "Khớp");
+            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            panel.Controls.Add(editors, 0, 0);
+            panel.Controls.Add(_dgvCompare, 0, 1);
+            panel.Controls.Add(_btnCompare, 0, 2);
+            group.Controls.Add(panel);
+            return group;
+        }
+
+        /// <summary>Chạy đối chiếu: DB lấy theo ô Database của từng khối kết nối.</summary>
+        private async Task RunCompareAsync()
+        {
+            var src = _cmpSource.ReadProfile();
+            var dst = _cmpDest.ReadProfile();
+            if (src == null || dst == null) return;
+            if (string.IsNullOrWhiteSpace(src.Database) || string.IsNullOrWhiteSpace(dst.Database)
+                || src.Database == ConnectionEditor.DbPlaceholder
+                || dst.Database == ConnectionEditor.DbPlaceholder)
+            {
+                MessageBox.Show("Hãy Connect DB và chọn database ở cả 2 khối nguồn/đích.",
+                    "Đối chiếu", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var srcEngine = EngineInfo.ParseEngine(src.Engine);
+            var dstEngine = EngineInfo.ParseEngine(dst.Engine);
+            if (MigrationGuard.EnsureSupportedEngines(src.Engine, dst.Engine) != null)
+            {
+                MessageBox.Show("Cặp engine này chưa hỗ trợ đối chiếu.",
+                    "Đối chiếu", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SetBusy(true);
+            try
+            {
+                _lblStatus.Text = "Đang đối chiếu...";
+                var service = new InventoryCompareService();
+                var progress = new Progress<MigrationProgress>(p => _lblStatus.Text = p.Message);
+                var rows = await service.CompareAsync(
+                    BuildProbe(src, _cmpSource.GetPlainPassword()), srcEngine,
+                    BuildProbe(dst, _cmpDest.GetPlainPassword()), dstEngine,
+                    progress);
+                _dgvCompare.Rows.Clear();
+                var mismatched = 0;
+                foreach (var row in rows)
+                {
+                    if (!row.Match) mismatched++;
+                    _dgvCompare.Rows.Add(row.Table,
+                        row.SourceRows < 0 ? "?" : row.SourceRows.ToString("N0"),
+                        row.DestRows < 0 ? "?" : row.DestRows.ToString("N0"),
+                        row.Match ? "Khớp" : "LỆCH");
+                }
+                _lblStatus.Text = $"Đối chiếu xong {rows.Count} bảng, {mismatched} lệch.";
+                await LogOpsAsync("Đối chiếu nhanh",
+                    $"{src.Server}/{src.Database} vs {dst.Server}/{dst.Database}",
+                    $"{rows.Count} bảng, {mismatched} lệch.", mismatched == 0);
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "Lỗi đối chiếu: " + ex.Message;
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        /// <summary>
+        /// Nhóm 9: quản lý file backup — liệt kê file trên server (chỉ xem; xóa
+        /// file server cần xp_cmdshell nên app khóa để an toàn) + file local đầy đủ.
+        /// </summary>
+        private Control BuildFileGroup()
+        {
+            var group = new GroupBox
+            {
+                Text = "9. Quản lý file backup",
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(6)
+            };
+            SetupGrid(_dgvSrvFiles, "File trên server");
+            SetupGrid(_dgvLocalFiles, "File local", "Dung lượng (MB)", "Sửa đổi");
+            var panel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            panel.Controls.Add(new Label { Text = "Thư mục server:", AutoSize = true }, 0, 0);
+            panel.Controls.Add(_txtSrvFolder, 1, 0);
+            var srvRow = new FlowLayoutPanel { AutoSize = true };
+            srvRow.Controls.Add(_btnSrvBrowse);
+            srvRow.Controls.Add(_btnSrvList);
+            panel.Controls.Add(srvRow, 2, 0);
+            panel.Controls.Add(new Label { Text = "Thư mục máy này:", AutoSize = true }, 0, 1);
+            panel.Controls.Add(_txtLocalFolder, 1, 1);
+            var localRow = new FlowLayoutPanel { AutoSize = true };
+            localRow.Controls.Add(_btnLocalBrowse);
+            localRow.Controls.Add(_btnLocalList);
+            localRow.Controls.Add(_btnLocalDelete);
+            panel.Controls.Add(localRow, 2, 1);
+            var grids = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1, Height = 150 };
+            grids.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            grids.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            _dgvSrvFiles.Dock = DockStyle.Fill;
+            _dgvLocalFiles.Dock = DockStyle.Fill;
+            grids.Controls.Add(_dgvSrvFiles, 0, 0);
+            grids.Controls.Add(_dgvLocalFiles, 1, 0);
+            var outer = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true };
+            outer.Controls.Add(panel, 0, 0);
+            outer.Controls.Add(grids, 0, 1);
+            group.Controls.Add(outer);
+            return group;
+        }
+
+        /// <summary>Nhóm 10: lịch sử thao tác quản trị (kill/dump/truy vấn/service...).</summary>
+        private Control BuildOpsLogGroup()
+        {
+            var group = new GroupBox
+            {
+                Text = "10. Lịch sử thao tác quản trị",
+                Dock = DockStyle.Top,
+                Padding = new Padding(6),
+                Height = 220
+            };
+            SetupGrid(_dgvOpsLog, "Thời gian", "Thao tác", "Đối tượng", "Chi tiết", "Kết quả");
+            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            panel.Controls.Add(_dgvOpsLog, 0, 0);
+            panel.Controls.Add(_btnOpsReload, 0, 1);
+            group.Controls.Add(panel);
+            return group;
+        }
+
+        private async Task RefreshOpsLogAsync()
+        {
+            try
+            {
+                var entries = await OpsLogStore.LoadAsync();
+                _dgvOpsLog.Rows.Clear();
+                foreach (var e in entries)
+                {
+                    _dgvOpsLog.Rows.Add(
+                        e.AtUtc.ToLocalTime().ToString("dd/MM HH:mm"),
+                        e.Action, e.Target, e.Detail,
+                        e.Success ? "OK" : "LỖI");
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>Liệt kê file .bak trên server qua xp_dirtree (chỉ xem).</summary>
+        private async Task ListServerFilesAsync()
+        {
+            var profile = _editor.ReadProfile();
+            if (profile == null) return;
+            if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer)
+            {
+                MessageBox.Show("Duyệt file server mới hỗ trợ SQL Server.",
+                    "Chưa hỗ trợ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var folder = _txtSrvFolder.Text.Trim();
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                MessageBox.Show("Nhập hoặc bấm 'Chọn…' để lấy thư mục trên server.",
+                    "File backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SetBusy(true);
+            try
+            {
+                string cs;
+                try
+                {
+                    cs = _builder.Build(profile);
+                }
+                catch (Exception ex)
+                {
+                    _lblStatus.Text = "Không dựng được kết nối: " + ex.Message;
+                    return;
+                }
+                var files = await new ServerFolderService().GetChildFilesAsync(cs, folder);
+                _dgvSrvFiles.Rows.Clear();
+                foreach (var f in files)
+                    _dgvSrvFiles.Rows.Add(f);
+                _lblStatus.Text = $"Thư mục server có {files.Count} file (chỉ xem — app không xóa file server).";
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "Lỗi liệt kê file server: " + ex.Message;
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        /// <summary>Nạp file local (kèm dung lượng/ngày sửa) + xóa file đã chọn.</summary>
+        private void LoadLocalFiles()
+        {
+            var folder = _txtLocalFolder.Text.Trim();
+            if (string.IsNullOrWhiteSpace(folder) || !System.IO.Directory.Exists(folder))
+            {
+                MessageBox.Show("Chọn thư mục local tồn tại trước.",
+                    "File backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            _dgvLocalFiles.Rows.Clear();
+            foreach (var file in System.IO.Directory.GetFiles(folder))
+            {
+                try
+                {
+                    var info = new System.IO.FileInfo(file);
+                    _dgvLocalFiles.Rows.Add(info.Name,
+                        (info.Length / 1048576.0).ToString("N1"),
+                        info.LastWriteTime.ToString("dd/MM/yyyy HH:mm"));
+                    _dgvLocalFiles.Rows[_dgvLocalFiles.Rows.Count - 1].Tag = info.FullName;
+                }
+                catch
+                {
+                }
+            }
+            _lblStatus.Text = $"Đã nạp {_dgvLocalFiles.Rows.Count} file local.";
+        }
+
+        private void DeleteLocalFile()
+        {
+            if (_dgvLocalFiles.SelectedRows.Count == 0) return;
+            var path = _dgvLocalFiles.SelectedRows[0].Tag as string ?? "";
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) return;
+            if (MessageBox.Show($"Chắc chắn xóa file local?\n{path}",
+                "Xóa file", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+            try
+            {
+                System.IO.File.Delete(path);
+                _ = LogOpsAsync("Xóa file backup", path, "Xóa file local.", true);
+                LoadLocalFiles();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Không xóa được: " + ex.Message,
+                    "Xóa file", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
         /// <summary>
         /// Nhóm 5: sao lưu/khôi phục MongoDB bằng binary mongodump/mongorestore.
         /// Tool không bundle binary nên người dùng cấu hình đường dẫn (để trống tên
@@ -108,7 +507,9 @@ namespace SqlMigrator.UI.Components
             var group = new GroupBox
             {
                 Text = "5. Sao lưu / khôi phục MongoDB (mongodump / mongorestore)",
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Padding = new Padding(6)
             };
             var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
@@ -184,6 +585,9 @@ namespace SqlMigrator.UI.Components
                 _lblStatus.Text = result.Success
                     ? $"Sao lưu MongoDB xong trong {result.Elapsed}."
                     : "Sao lưu MongoDB thất bại: " + result.Error;
+                await LogOpsAsync("Sao lưu MongoDB", $"{profile.Server}/{profile.Database}",
+                    result.Success ? $"xong trong {result.Elapsed}." : result.Error ?? "lỗi",
+                    result.Success);
             }
             catch (Exception ex)
             {
@@ -228,6 +632,9 @@ namespace SqlMigrator.UI.Components
                 _lblStatus.Text = result.Success
                     ? $"Khôi phục MongoDB xong trong {result.Elapsed}."
                     : "Khôi phục MongoDB thất bại: " + result.Error;
+                await LogOpsAsync("Khôi phục MongoDB", $"{profile.Server}/{profile.Database}",
+                    result.Success ? $"xong trong {result.Elapsed}." : result.Error ?? "lỗi",
+                    result.Success);
             }
             catch (Exception ex)
             {
@@ -248,7 +655,7 @@ namespace SqlMigrator.UI.Components
             var group = new GroupBox
             {
                 Text = "4. Báo cáo routine cần xử lý tay (view/procedure/function/trigger)",
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
                 Padding = new Padding(6)
             };
             SetupGrid(_dgvRoutines, "Schema", "Routine", "Loại", "Độ dài", "Hướng dẫn");
@@ -292,6 +699,188 @@ namespace SqlMigrator.UI.Components
             _btnRoutineReport.Click += async (_, _) => await LoadRoutineReportAsync();
             _btnMongoBackup.Click += async (_, _) => await RunMongoBackupAsync();
             _btnMongoRestore.Click += async (_, _) => await RunMongoRestoreAsync();
+            _btnSvcQuery.Click += async (_, _) => await RefreshServiceStateAsync();
+            _btnSvcStart.Click += async (_, _) => await ControlServiceAsync("start");
+            _btnSvcStop.Click += async (_, _) => await ControlServiceAsync("stop");
+            _btnSvcRestart.Click += async (_, _) => await ControlServiceAsync("restart");
+            _btnQueryRun.Click += async (_, _) => await RunQueryAsync();
+            _btnCompare.Click += async (_, _) => await RunCompareAsync();
+            _btnSrvBrowse.Click += (_, _) => BrowseServerFolder();
+            _btnSrvList.Click += async (_, _) => await ListServerFilesAsync();
+            _btnLocalBrowse.Click += (_, _) => BrowseLocalFolder();
+            _btnLocalList.Click += (_, _) => LoadLocalFiles();
+            _btnLocalDelete.Click += (_, _) => DeleteLocalFile();
+            _btnOpsReload.Click += async (_, _) => await RefreshOpsLogAsync();
+        }
+
+        /// <summary>Chọn thư mục trên server bằng dialog duyệt disk (điền vào ô).</summary>
+        private void BrowseServerFolder()
+        {
+            var profile = _editor.ReadProfile();
+            if (profile == null) return;
+            if (EngineInfo.ParseEngine(profile.Engine) != DatabaseEngine.SqlServer) return;
+            string cs;
+            try
+            {
+                cs = _builder.Build(profile);
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "Không dựng được kết nối: " + ex.Message;
+                return;
+            }
+            var service = new ServerFolderService(m => _lblStatus.Text = m);
+            using var dlg = new ServerFolderPickerDialog(service, cs, CancellationToken.None, "đích");
+            if (dlg.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(dlg.SelectedPath))
+                _txtSrvFolder.Text = dlg.SelectedPath.Trim();
+        }
+
+        private void BrowseLocalFolder()
+        {
+            using var dlg = new FolderBrowserDialog { Description = "Chọn thư mục local chứa file backup" };
+            if (dlg.ShowDialog() == DialogResult.OK)
+                _txtLocalFolder.Text = dlg.SelectedPath;
+        }
+
+        private string SelectedServiceName()
+        {
+            var text = _cmbService.Text.Trim();
+            var sep = text.IndexOf(" — ", StringComparison.Ordinal);
+            return sep > 0 ? text.Substring(0, sep).Trim() : text;
+        }
+
+        /// <summary>Xem trạng thái service hiện tại (local hoặc máy remote).</summary>
+        private async Task RefreshServiceStateAsync()
+        {
+            var name = SelectedServiceName();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                MessageBox.Show("Nhập/chọn tên service.", "Service",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SetBusy(true);
+            try
+            {
+                var info = await new ServiceControlService().QueryAsync(_txtSvcMachine.Text, name);
+                _lblSvcState.Text = info.State == WindowsServiceState.Unknown
+                    ? $"Không đọc được service '{name}' (sai tên/máy hoặc thiếu quyền)."
+                    : $"{info.DisplayName}: {info.State}.";
+            }
+            catch (Exception ex)
+            {
+                _lblSvcState.Text = "Lỗi: " + ex.Message;
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        /// <summary>Start/Stop/Restart service (luôn hỏi xác nhận vì ảnh hưởng toàn server).</summary>
+        private async Task ControlServiceAsync(string action)
+        {
+            var name = SelectedServiceName();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                MessageBox.Show("Nhập/chọn tên service.", "Service",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var verb = action == "start" ? "START" : action == "stop" ? "STOP" : "RESTART";
+            var machine = _txtSvcMachine.Text.Trim();
+            var where = string.IsNullOrWhiteSpace(machine) ? "máy này" : "máy " + machine;
+            if (MessageBox.Show($"Chắc chắn {verb} service '{name}' trên {where}?\n"
+                + "Mọi kết nối tới service sẽ bị ảnh hưởng.",
+                $"Xác nhận {verb} service", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+                != DialogResult.Yes)
+                return;
+            SetBusy(true);
+            try
+            {
+                var svc = new ServiceControlService();
+                ServiceCommandResult result = action == "start"
+                    ? await svc.StartAsync(machine, name)
+                    : action == "stop"
+                    ? await svc.StopAsync(machine, name)
+                    : await svc.RestartAsync(machine, name);
+                _lblSvcState.Text = result.Success
+                    ? $"Đã gửi lệnh {verb} '{name}'."
+                    : $"{verb} thất bại: {result.Output}";
+                if (!result.Success)
+                    MessageBox.Show(result.Output, verb + " thất bại",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                else
+                    await RefreshServiceStateAsync();
+                await LogOpsAsync(verb + " service", (string.IsNullOrWhiteSpace(machine) ? "máy này" : machine) + "/" + name,
+                    result.Success ? "đã gửi lệnh." : result.Output, result.Success);
+            }
+            catch (Exception ex)
+            {
+                _lblSvcState.Text = "Lỗi: " + ex.Message;
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        /// <summary>Chạy truy vấn trên engine của kết nối nhóm 1 (trừ MongoDB).</summary>
+        private async Task RunQueryAsync()
+        {
+            var profile = _editor.ReadProfile();
+            if (profile == null) return;
+            var engine = EngineInfo.ParseEngine(profile.Engine);
+            if (engine == DatabaseEngine.MongoDb)
+            {
+                MessageBox.Show("MongoDB không dùng SQL — hộp truy vấn không áp dụng.",
+                    "Truy vấn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (engine != DatabaseEngine.SqlServer && engine != DatabaseEngine.MySql
+                && engine != DatabaseEngine.PostgreSql && engine != DatabaseEngine.Sqlite)
+            {
+                MessageBox.Show("Engine này chưa hỗ trợ truy vấn.",
+                    "Truy vấn", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            SetBusy(true);
+            try
+            {
+                _lblQueryStatus.Text = "Đang chạy...";
+                var result = await new QueryRunnerService().ExecuteAsync(
+                    BuildProbe(profile), engine, _txtQuery.Text);
+                if (!result.Success)
+                {
+                    _lblQueryStatus.Text = "Lỗi: " + result.Error;
+                    return;
+                }
+                if (result.Table != null)
+                {
+                    _dgvQueryResult.Columns.Clear();
+                    _dgvQueryResult.DataSource = result.Table;
+                    _lblQueryStatus.Text = $"Xong trong {result.Elapsed.TotalSeconds:N1}s: "
+                        + $"{result.Table.Rows.Count} dòng"
+                        + (result.Truncated ? " (đã cắt ở 5000 dòng)" : "") + ".";
+                    await LogOpsAsync("Truy vấn", profile.Server,
+                        $"SELECT {result.Table.Rows.Count} dòng trong {result.Elapsed.TotalSeconds:N1}s.", true);
+                }
+                else
+                {
+                    _lblQueryStatus.Text = $"Xong trong {result.Elapsed.TotalSeconds:N1}s: "
+                        + $"{result.RowsAffected} dòng ảnh hưởng.";
+                    await LogOpsAsync("Truy vấn", profile.Server,
+                        $"lệnh ghi: {result.RowsAffected} dòng ảnh hưởng.", true);
+                }
+            }
+            catch (Exception ex)
+            {
+                _lblQueryStatus.Text = "Lỗi: " + ex.Message;
+            }
+            finally
+            {
+                SetBusy(false);
+            }
         }
 
         private static DatabaseEngine RoutineTargetFromIndex(int index) => index switch
@@ -356,16 +945,28 @@ namespace SqlMigrator.UI.Components
             return null;
         }
 
-        private DbProbe BuildProbe(ConnectionProfile profile) => new()
+        private DbProbe BuildProbe(ConnectionProfile profile, string? plainPassword = null) => new()
         {
             Host = profile.Server,
             Port = profile.Port,
             Database = profile.Database,
             User = profile.UserName,
-            Password = _editor.GetPlainPassword(),
+            Password = plainPassword ?? _editor.GetPlainPassword(),
             UseWindowsAuth = profile.Authentication == AuthenticationMode.Windows,
             TimeoutSeconds = 15
         };
+
+        /// <summary>Ghi một dòng lịch sử thao tác (không secret, không toàn văn SQL).</summary>
+        private static Task LogOpsAsync(string action, string target, string detail, bool success)
+        {
+            return OpsLogStore.AppendAsync(new OpsLogEntry
+            {
+                Action = action,
+                Target = target,
+                Detail = detail,
+                Success = success
+            });
+        }
 
         private async Task LoadDatabasesAsync()
         {
@@ -489,6 +1090,8 @@ namespace SqlMigrator.UI.Components
                     "Kill session", MessageBoxButtons.OK,
                     result.Confirmed ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
                 _lblStatus.Text = $"Kill phiên {id}: {verdict}";
+                await LogOpsAsync("Kill session", $"{profile.Server} Id={id} ({login})",
+                    verdict, result.Confirmed);
                 await LoadSessionsAsync();
             }
             catch (Exception ex)
@@ -509,6 +1112,15 @@ namespace SqlMigrator.UI.Components
             _btnRoutineReport.Enabled = !busy;
             _btnMongoBackup.Enabled = !busy;
             _btnMongoRestore.Enabled = !busy;
+            _btnSvcQuery.Enabled = !busy;
+            _btnSvcStart.Enabled = !busy;
+            _btnSvcStop.Enabled = !busy;
+            _btnSvcRestart.Enabled = !busy;
+            _btnQueryRun.Enabled = !busy;
+            _btnCompare.Enabled = !busy;
+            _btnSrvList.Enabled = !busy;
+            _btnLocalList.Enabled = !busy;
+            _btnLocalDelete.Enabled = !busy;
             _editor.Enabled = !busy;
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }

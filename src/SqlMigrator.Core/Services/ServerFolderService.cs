@@ -34,6 +34,13 @@ namespace SqlMigrator.Core.Services
 
         /// <summary>Danh sách thư mục con (1 cấp) của <paramref name="path"/> trên server.</summary>
         Task<IReadOnlyList<string>> GetChildFoldersAsync(string connectionString, string path, CancellationToken ct = default);
+
+        /// <summary>
+        /// Danh sách file (1 cấp) của <paramref name="path"/> trên server (chỉ tên,
+        /// xp_dirtree không cho dung lượng/ngày). Chỉ xem — xóa file server cần
+        /// xp_cmdshell nên app không hỗ trợ để an toàn.
+        /// </summary>
+        Task<IReadOnlyList<string>> GetChildFilesAsync(string connectionString, string path, CancellationToken ct = default);
     }
 
     /// <inheritdoc cref="IServerFolderLister"/>
@@ -107,6 +114,32 @@ namespace SqlMigrator.Core.Services
                 var sub = reader.GetString(0);
                 if (!string.IsNullOrWhiteSpace(sub))
                     result.Add(sub);
+            }
+
+            return NormalizeFolders(result);
+        }
+
+        public async Task<IReadOnlyList<string>> GetChildFilesAsync(
+            string connectionString, string path, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Chưa có đường dẫn để liệt kê file.", nameof(path));
+
+            // xp_dirtree @depth=1, file=1: cột file=1 là file, 0 là thư mục.
+            const string query = "EXEC master.dbo.xp_dirtree @path, 1, 1;";
+            var result = new List<string>();
+
+            using var conn = SqlConnectionFactory.OpenWithFallback(
+                ToMaster(connectionString), 30, _log, ct);
+            using var cmd = new SqlCommand(query, conn) { CommandTimeout = 30 };
+            cmd.Parameters.AddWithValue("@path", path);
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var name = reader.IsDBNull(0) ? "" : reader.GetString(0);
+                var isFile = !reader.IsDBNull(2) && Convert.ToInt32(reader.GetValue(2)) == 1;
+                if (isFile && !string.IsNullOrWhiteSpace(name))
+                    result.Add(name.Trim());
             }
 
             return NormalizeFolders(result);
