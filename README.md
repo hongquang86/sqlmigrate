@@ -1,6 +1,8 @@
 # SQL Management Tools
 
-Công cụ **di chuyển database SQL Server** (migrate) với giao diện **Windows Forms**.
+Công cụ **di chuyển database đa engine** (SQL Server, PostgreSQL, MySQL/MariaDB,
+SQLite, MongoDB) với giao diện **Windows Forms** gồm 3 tab: Di chuyển, Sao lưu /
+Khôi phục, Quản trị Service.
 Ưu điểm nổi bật: giữ nguyên cấu trúc (bảng, khóa, index, view, proc, function, trigger,
 sequence...), sao chép dữ liệu theo thứ tự phụ thuộc khóa ngoại, hỗ trợ di chuyển giữa các
 phiên bản SQL Server khác nhau, bảo mật toàn bộ thông tin đăng nhập.
@@ -21,6 +23,15 @@ phiên bản SQL Server khác nhau, bảo mật toàn bộ thông tin đăng nh�
 - **Nhật ký real-time**: khung nhật ký kiểu console ngay trong ứng dụng, tự động ghi file
   theo cuộc di chuyển, nút xuất nhật ký.
 - **Quản lý profile kết nối**: nhiều profile được mã hóa bằng **DPAPI** và tải lại một chạm.
+- **Di chuyển chéo engine**: SQL Server ↔ PostgreSQL ↔ MySQL/MariaDB ↔ SQLite ↔
+  MongoDB qua mô hình chuẩn (canonical model + ma trận kiểu + cảnh báo hao hụt).
+  MongoDB suy schema từ mẫu document; routine (view/proc/function/trigger) có báo
+  cáo hướng dẫn viết lại tay trong tab Quản trị.
+- **Sao lưu / Khôi phục**: SQL Server (BACKUP/RESTORE T-SQL, sao lưu multi-database)
+  + SQLite (copy file + kiểm tra toàn vẹn) + MongoDB (mongodump/mongorestore).
+- **Quản trị Service**: đọc database/dung lượng/phiên, kill session có xác nhận đổi
+  trạng thái (SQL Server, MySQL/MariaDB); đọc SQLite (toàn vẹn file) và MongoDB
+  (dbStats, currentOp).
 
 ## Bảo mật
 
@@ -115,4 +126,5 @@ vòng đời profile và chống plaintext (`SecurityTests`), bộ lọc cột k
 
 - Không di chuyển: edge case SMO không hỗ trợ, đối tượng CLR khi đích thiếu assembly,
   bảng filetable/temporal/external không được copy dữ liệu (có cảnh báo).
+- Mover MySQL/MongoDB mới qua kiểm thử logic (unit test), chưa smoke test server thật.
 - Chưa có giao diện lập lịch; mỗi lần di chuyển là một lần thao tác trực tiếp.

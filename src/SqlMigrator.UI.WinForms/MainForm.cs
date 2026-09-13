@@ -11,7 +11,7 @@ namespace SqlMigrator.UI
     /// </summary>
     public sealed class MainForm : Form
     {
-        public MainForm(MigrateTabPage migrateTab, BackupRestoreTabPage backupTab)
+        public MainForm(MigrateTabPage migrateTab, BackupRestoreTabPage backupTab, Components.ManageTabPage manageTab)
         {
             Text = "SQL Management Tools — Bộ công cụ quản lý Database Server";
             StartPosition = FormStartPosition.CenterScreen;
@@ -27,10 +27,7 @@ namespace SqlMigrator.UI
             tabs.DrawItem += DrawMainTab;
             tabs.TabPages.Add(new TabPage("Di chuyển (Migrate)") { Controls = { migrateTab } });
             tabs.TabPages.Add(new TabPage("Sao lưu / Khôi phục") { Controls = { backupTab } });
-            tabs.TabPages.Add(BuildPlaceholderTab(
-                "Quản trị Service",
-                "Chức năng quản trị service/database đang phát triển.\r\n"
-                + "Hiện tại hãy dùng công cụ quản trị của từng hệ CSDL."));
+            tabs.TabPages.Add(new TabPage("Quản trị Service") { Controls = { manageTab } });
             Controls.Add(tabs);
         }
 
@@ -53,25 +50,5 @@ namespace SqlMigrator.UI
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
-        private static TabPage BuildPlaceholderTab(string title, string message)
-        {
-            var label = new Label
-            {
-                Text = message,
-                Dock = DockStyle.Fill,
-                TextAlign = System.Drawing.ContentAlignment.MiddleCenter,
-                AutoSize = false
-            };
-            var group = new GroupBox
-            {
-                Text = title,
-                Dock = DockStyle.Fill,
-                Padding = new Padding(12)
-            };
-            group.Controls.Add(label);
-            var page = new TabPage(title);
-            page.Controls.Add(group);
-            return page;
-        }
     }
 }

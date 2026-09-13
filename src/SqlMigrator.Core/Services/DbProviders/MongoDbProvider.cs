@@ -41,7 +41,8 @@ namespace SqlMigrator.Core.Services.DbProviders
                     DisplayName = DisplayName,
                     Version = (version ?? "").Trim(),
                     MajorVersion = ParseMajor(version ?? ""),
-                    SupportsMigration = false
+                    SupportsMigration = MigrationGuard.IsSupportedPair(
+                        DatabaseEngine.MongoDb, DatabaseEngine.SqlServer)
                 };
             }
             catch

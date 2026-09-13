@@ -21,6 +21,7 @@ static class Program
         services.AddSingleton<SecureConnectionStringBuilder>();
         services.AddSingleton<MigrateTabPage>();
         services.AddSingleton<Components.BackupRestoreTabPage>();
+        services.AddSingleton<Components.ManageTabPage>();
         services.AddSingleton<MainForm>();
 
         using var provider = services.BuildServiceProvider();

@@ -41,7 +41,42 @@ namespace SqlMigrator.Core.Services.DataMove
             {
                 DatabaseEngine.Sqlite => ForSqlite(value, type),
                 DatabaseEngine.PostgreSql => ForPostgres(value, type),
+                DatabaseEngine.MySql => ForMySql(value, type),
+                DatabaseEngine.MongoDb => ForMongo(value, type),
                 _ => ForSqlServer(value, type)
+            };
+        }
+
+        /// <summary>
+        /// MongoDB (BSON): Guid gửi chuỗi (tránh Binary subtype lạ), ngày/giờ về UTC,
+        /// DateOnly/TimeOnly/TimeSpan không có kiểu BSON tương ứng nên gửi chuỗi ISO.
+        /// </summary>
+        private static object? ForMongo(object? value, CanonicalType type)
+        {
+            return value switch
+            {
+                Guid g => g.ToString("D"),
+                DateTimeOffset dto => dto.UtcDateTime,
+                DateOnly d => d.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+                TimeOnly t => t.ToString("HH:mm:ss.fffffff"),
+                TimeSpan ts => ts.ToString("c"),
+                _ => value
+            };
+        }
+
+        /// <summary>
+        /// MySQL/MariaDB không có kiểu UUID/tz riêng: Guid gửi chuỗi 36 ký tự
+        /// (cột CHAR(36)), DateTimeOffset hạ về DateTime giữ nguyên giờ địa phương
+        /// (khớp cảnh báo ở DbTypeMappers.ConvertTo).
+        /// </summary>
+        private static object? ForMySql(object? value, CanonicalType type)
+        {
+            return value switch
+            {
+                Guid g => g.ToString("D"),
+                DateTimeOffset dto => dto.DateTime,
+                bool b => (byte)(b ? 1 : 0),
+                _ => value
             };
         }
 

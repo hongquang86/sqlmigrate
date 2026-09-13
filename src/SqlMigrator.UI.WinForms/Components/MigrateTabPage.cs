@@ -181,6 +181,46 @@ namespace SqlMigrator.UI
                         return "Không tạo được file SQLite: " + ex.Message;
                     }
                 }
+                // MySQL/MariaDB đích: CREATE DATABASE ... CHARACTER SET utf8mb4.
+                if (EngineInfo.ParseEngine(destProfile.Engine) == DatabaseEngine.MySql)
+                {
+                    var dbName = destProfile.Database.Trim();
+                    if (string.IsNullOrWhiteSpace(dbName))
+                        return "Vui lòng nhập tên database đích mới ở ô Database trước.";
+                    try
+                    {
+                        var probe = new DbProbe
+                        {
+                            Host = destProfile.Server,
+                            Port = destProfile.Port,
+                            User = destProfile.UserName,
+                            Password = _destEditor.GetPlainPassword(),
+                            TimeoutSeconds = 30
+                        };
+                        var ep = new MySqlEndpoint();
+                        await ep.ExecuteDdlAsync(probe,
+                            "CREATE DATABASE IF NOT EXISTS `"
+                            + dbName.Replace("`", "``")
+                            + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
+                            ct);
+                        AppendLog("[THÔNG TIN] Đã tạo database MySQL đích '" + dbName + "'.");
+                        return string.Empty;
+                    }
+                    catch (Exception ex)
+                    {
+                        return "Không tạo được database MySQL: " + ex.Message;
+                    }
+                }
+                // MongoDB đích: database tự tạo khi ghi document đầu tiên (lazy),
+                // chỉ cần kiểm tra tên hợp lệ.
+                if (EngineInfo.ParseEngine(destProfile.Engine) == DatabaseEngine.MongoDb)
+                {
+                    if (string.IsNullOrWhiteSpace(destProfile.Database))
+                        return "Vui lòng nhập tên database đích mới ở ô Database trước.";
+                    AppendLog("[THÔNG TIN] Database MongoDB '" + destProfile.Database
+                        + "' sẽ tự tạo khi ghi document đầu tiên.");
+                    return string.Empty;
+                }
                 var sourceProfile = _sourceEditor.ReadProfile();
                 if (sourceProfile == null)
                     return "Vui lòng nhập thông tin server nguồn (dùng để lấy collation cho database đích).";

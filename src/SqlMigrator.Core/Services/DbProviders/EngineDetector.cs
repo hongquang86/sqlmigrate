@@ -83,24 +83,26 @@ namespace SqlMigrator.Core.Services.DbProviders
             if (IsSupportedPair(src, dst))
                 return null;
             return $"Cặp engine {Describe(src)} → {Describe(dst)} chưa di chuyển được ở bản này. "
-                + "Các engine hỗ trợ đi với nhau mọi chiều: SQL Server, PostgreSQL, SQLite. "
+                + "Các engine hỗ trợ: SQL Server, PostgreSQL, SQLite, MySQL/MariaDB, MongoDB. "
                 + "Hãy chọn lại cặp được hỗ trợ hoặc chờ các pha engine tiếp theo.";
         }
 
         /// <summary>Cặp engine đã chạy migrate được chưa (đối xứng).</summary>
         public static bool IsSupportedPair(DatabaseEngine source, DatabaseEngine destination)
         {
-            if (!IsRelational(source) || !IsRelational(destination))
+            if (source == DatabaseEngine.Unknown || destination == DatabaseEngine.Unknown)
                 return false;
-            // Mọi cặp trong {SQL Server, PostgreSQL, SQLite} đều chạy được:
-            // cùng engine, SQLite đi với mọi engine quan hệ, và SQL Server ↔ PostgreSQL.
+            // Pha 6: mọi engine còn lại đều chạy qua mover chuẩn (MongoDB survey
+            // document thành bảng). Chỉ Unknown bị chặn.
             return true;
         }
 
         private static bool IsRelational(DatabaseEngine engine) =>
             engine == DatabaseEngine.SqlServer
             || engine == DatabaseEngine.PostgreSql
-            || engine == DatabaseEngine.Sqlite;
+            || engine == DatabaseEngine.Sqlite
+            || engine == DatabaseEngine.MySql
+            || engine == DatabaseEngine.MongoDb;
 
         private static string Describe(DatabaseEngine engine) => engine switch
         {

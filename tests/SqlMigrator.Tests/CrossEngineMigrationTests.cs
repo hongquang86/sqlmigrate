@@ -19,10 +19,15 @@ public class CrossEngineMigrationTests
     [InlineData("Sqlite", "PostgreSql", true)]
     [InlineData("Sqlite", "Sqlite", true)]
     [InlineData("PostgreSql", "PostgreSql", true)]
-    [InlineData("SqlServer", "MySql", false)]
-    [InlineData("MySql", "SqlServer", false)]
-    [InlineData("SqlServer", "MongoDb", false)]
-    [InlineData("MySql", "MongoDb", false)]
+    [InlineData("SqlServer", "MySql", true)]
+    [InlineData("MySql", "SqlServer", true)]
+    [InlineData("MySql", "MySql", true)]
+    [InlineData("MySql", "PostgreSql", true)]
+    [InlineData("MySql", "Sqlite", true)]
+    [InlineData("SqlServer", "MongoDb", true)]
+    [InlineData("MySql", "MongoDb", true)]
+    [InlineData("MongoDb", "MongoDb", true)]
+    [InlineData("MongoDb", "Sqlite", true)]
     public void IsSupportedPair_Matrix(string src, string dst, bool expected)
     {
         var s = EngineInfo.ParseEngine(src);
@@ -35,7 +40,8 @@ public class CrossEngineMigrationTests
     [InlineData("SqlServer", "SqlServer", true)]
     [InlineData("SqlServer", "PostgreSql", true)]
     [InlineData("Sqlite", "PostgreSql", true)]
-    [InlineData("SqlServer", "MySql", false)]
+    [InlineData("SqlServer", "MySql", true)]
+    [InlineData("MySql", "Sqlite", true)]
     [InlineData("", "", true)]
     public void EnsureSupportedEngines_MessageOrNull(string src, string dst, bool allowed)
     {

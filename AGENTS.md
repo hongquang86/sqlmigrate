@@ -47,3 +47,22 @@ Nếu xung đột giữa yêu cầu của người dùng và file này, cần l�
 - Kiểm chứng: `dotnet build` 0 Warning/0 Error; `dotnet test` 376/376 pass
   (khóa chiều ngược trong `CanonicalDdlTests`); publish + installer + ClickToRun zip.
 - Quy ước: mọi commit/push chỉ khi user yêu cầu tường minh.
+
+## 7. Nhật ký phiên làm việc (13/09/2026 — Pha 4+5+6)
+- Pha 4a (MySQL/MariaDB 2 chiều): `MySqlEndpoint` full `IDbEndpoint`
+  (information_schema, chunk keyset, multi-row INSERT 500 dòng/lệnh),
+  `ParseMySql`/`EmitMySql`/`ConvertTo` nhánh MySql, `ForMySql`, guard mở MySQL,
+  UI liệt kê DB + Tạo DB utf8mb4.
+- Pha 4b (Manage v1): tab Quản trị Service mới (`ManageTabPage`) thay placeholder;
+  `IManageProvider` + SQL/MySQL provider (DB/size/session/disk + KILL + xác nhận
+  state đổi qua `ManageVerify`); kill luôn có hộp xác nhận.
+- Pha 5: `RoutineGuideService` (liệt kê routine + ma trận hướng dẫn viết lại theo
+  đích, nhóm 4 tab Quản trị); Manage đọc SQLite (`SqliteManageProvider` + integrity)
+  và MongoDB (`MongoManageProvider`: dbStats/currentOp, chỉ đọc).
+- Pha 6 (MongoDB 2 chiều): `MongoSurvey` (suy schema từ mẫu, hỗn hợp→chuỗi, lồng→JSON),
+  `MongoEndpoint` (keyset đúng thứ tự BSON, InsertMany), `EmitMongo`, `ConvertFor/To`
+  nhánh Mongo, guard mở full; `MongoDumpService` (binary cấu hình, không log secret)
+  + nhóm 5 tab Quản trị.
+- Kiểm chứng: `dotnet build` 0 Warning/0 Error; `dotnet test` 431/431 pass; publish +
+  installer + ClickToRun zip. Chưa smoke test server thật (MySQL/Mongo) — đợi user.
+- Không đụng Reconcile theo yêu cầu user.

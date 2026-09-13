@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using SqlMigrator.Core.Models;
@@ -292,6 +293,116 @@ namespace SqlMigrator.Core.Services.DataMove
                 string.IsNullOrWhiteSpace(fk.RefSchema) ? defaultSchema : fk.RefSchema!,
                 fk.RefTable);
             return $"{head} ({string.Join(", ", cols)}) REFERENCES {target} ({string.Join(", ", refs)})";
+        }
+
+        // ------------------------------------------------------------------
+        // MySQL / MariaDB (Pha 4a: SQL Server → MySQL và ngược lại)
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Sinh CREATE TABLE cho MySQL/MariaDB: quote backtick, không dùng schema
+        /// (kết nối đã trỏ đúng database đích), khóa chính đơn AUTO_INCREMENT inline.
+        /// </summary>
+        public static string EmitMySql(CanonicalTable table, out List<string> warnings)
+        {
+            warnings = new List<string>();
+            if (!string.IsNullOrWhiteSpace(table.Schema))
+                warnings.Add($"Schema '{table.Schema}' được bỏ qua — MySQL dùng database đích của kết nối.");
+            var sb = new StringBuilder();
+            sb.Append("CREATE TABLE ").Append(MyQuote(table.Name)).Append(" (\n");
+            var defs = new List<string>();
+            var pk = table.PrimaryKeyColumns;
+            var singleAutoPk = pk.Count == 1 && IsIntegerPk(table, pk[0]) && IsIdentityCol(table, pk[0]);
+            var autoDone = false;
+            foreach (var c in table.Columns)
+            {
+                var (mapped, _, _, _, warn) = DbTypeMappers.ConvertTo(
+                    c.Type, c.MaxLength, c.Precision, c.Scale, DatabaseEngine.MySql);
+                if (warn != null && !warnings.Contains("Cột " + c.Name + ": " + warn))
+                    warnings.Add($"Cột {c.Name}: {warn}");
+                var col = MyQuote(c.Name) + " " + DbTypeMappers.EmitMySql(
+                    mapped, c.MaxLength, c.Precision, c.Scale);
+                var isPkCol = pk.Contains(c.Name, StringComparer.OrdinalIgnoreCase);
+                if (singleAutoPk && !autoDone && c.Name.Equals(pk[0], StringComparison.OrdinalIgnoreCase))
+                {
+                    col += " NOT NULL AUTO_INCREMENT PRIMARY KEY";
+                    autoDone = true;
+                }
+                else if (!c.IsNullable || isPkCol)
+                {
+                    col += " NOT NULL";
+                }
+                var (kept, dwarn) = TranslateDefault(c.DefaultSql, DatabaseEngine.MySql);
+                if (dwarn != null)
+                    warnings.Add($"Cột {c.Name}: {dwarn}");
+                if (kept != null)
+                    col += " DEFAULT " + kept;
+                defs.Add("    " + col);
+            }
+            if (pk.Count > 1)
+            {
+                var quoted = new List<string>();
+                foreach (var k in pk)
+                    quoted.Add(MyQuote(k));
+                defs.Add("    PRIMARY KEY (" + string.Join(", ", quoted) + ")");
+            }
+            else if (pk.Count == 1 && !singleAutoPk)
+            {
+                defs.Add("    PRIMARY KEY (" + MyQuote(pk[0]) + ")");
+            }
+            foreach (var fk in table.ForeignKeys)
+                defs.Add("    " + EmitMySqlFk(fk));
+            sb.Append(string.Join(",\n", defs));
+            sb.Append("\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+            return sb.ToString();
+        }
+
+        private static bool IsIdentityCol(CanonicalTable table, string column)
+        {
+            foreach (var c in table.Columns)
+            {
+                if (c.Name.Equals(column, StringComparison.OrdinalIgnoreCase))
+                    return c.IsIdentity;
+            }
+            return false;
+        }
+
+        private static string EmitMySqlFk(CanonicalForeignKey fk)
+        {
+            var cols = new List<string>();
+            foreach (var c in fk.Columns)
+                cols.Add(MyQuote(c));
+            var refs = new List<string>();
+            foreach (var c in fk.RefColumns)
+                refs.Add(MyQuote(c));
+            var head = string.IsNullOrWhiteSpace(fk.Name)
+                ? "FOREIGN KEY"
+                : "CONSTRAINT " + MyQuote(fk.Name) + " FOREIGN KEY";
+            return $"{head} ({string.Join(", ", cols)}) REFERENCES {MyQuote(fk.RefTable)} ({string.Join(", ", refs)})";
+        }
+
+        private static string MyQuote(string name) => "`" + name.Replace("`", "``") + "`";
+
+        // ------------------------------------------------------------------
+        // MongoDB (Pha 6: schemaless — không có CREATE TABLE cột)
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// "DDL" cho MongoDB chỉ là tên collection (mover gửi qua ExecuteDdl để tạo
+        /// trước, insert sau cũng tự tạo). Vẫn chạy ConvertTo từng cột để gom cảnh
+        /// báo mất mát (tz, guid, unknown) cho báo cáo.
+        /// </summary>
+        public static string EmitMongo(CanonicalTable table, out List<string> warnings)
+        {
+            warnings = new List<string>();
+            foreach (var c in table.Columns)
+            {
+                var (_, _, _, _, warn) = DbTypeMappers.ConvertTo(
+                    c.Type, c.MaxLength, c.Precision, c.Scale, DatabaseEngine.MongoDb);
+                if (warn != null && !warnings.Contains("Cột " + c.Name + ": " + warn))
+                    warnings.Add($"Cột {c.Name}: {warn}");
+            }
+            return "MONGO:" + table.Name;
         }
     }
 }

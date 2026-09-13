@@ -808,7 +808,69 @@ namespace SqlMigrator.UI.Components
                     }
                     return;
                 }
-                // Engine khác SQL Server: Pha này mới nhận diện, chưa liệt kê database cho engine khác.
+                // MySQL/MariaDB: liệt kê database qua SHOW DATABASES để người dùng chọn.
+                if (engine == DatabaseEngine.MySql)
+                {
+                    try
+                    {
+                        var probe = new DbProbe
+                        {
+                            Host = profile.Server,
+                            Port = profile.Port,
+                            User = profile.UserName,
+                            Password = _txtPassword.Text,
+                            TimeoutSeconds = 5
+                        };
+                        var myDbs = await MySqlEndpoint.ListDatabasesAsync(probe);
+                        _cmbDatabase.Items.Clear();
+                        _cmbDatabase.Items.Add(DbPlaceholder);
+                        foreach (var name in myDbs) _cmbDatabase.Items.Add(name);
+                        if (!string.IsNullOrWhiteSpace(profile.Database)
+                            && myDbs.Contains(profile.Database))
+                            _cmbDatabase.Text = profile.Database;
+                        SetConnStatus($"Đã nạp {myDbs.Count} database MySQL — hãy chọn một.", true);
+                        Log("[THÔNG TIN] " + RoleLabel + " " + SafeServer(profile)
+                            + $" đã nạp {myDbs.Count} database MySQL.");
+                    }
+                    catch (Exception ex)
+                    {
+                        SetConnStatus("Không liệt kê được database MySQL: " + ex.Message, false);
+                        Log("[LỖI] " + RoleLabel + " không liệt kê được database MySQL: " + ex.Message);
+                    }
+                    return;
+                }
+                // MongoDB: liệt kê database qua driver để người dùng chọn.
+                if (engine == DatabaseEngine.MongoDb)
+                {
+                    try
+                    {
+                        var probe = new DbProbe
+                        {
+                            Host = profile.Server,
+                            Port = profile.Port,
+                            User = profile.UserName,
+                            Password = _txtPassword.Text,
+                            TimeoutSeconds = 5
+                        };
+                        var mongoDbs = await MongoEndpoint.ListDatabasesAsync(probe);
+                        _cmbDatabase.Items.Clear();
+                        _cmbDatabase.Items.Add(DbPlaceholder);
+                        foreach (var name in mongoDbs) _cmbDatabase.Items.Add(name);
+                        if (!string.IsNullOrWhiteSpace(profile.Database)
+                            && mongoDbs.Contains(profile.Database))
+                            _cmbDatabase.Text = profile.Database;
+                        SetConnStatus($"Đã nạp {mongoDbs.Count} database MongoDB — hãy chọn một.", true);
+                        Log("[THÔNG TIN] " + RoleLabel + " " + SafeServer(profile)
+                            + $" đã nạp {mongoDbs.Count} database MongoDB.");
+                    }
+                    catch (Exception ex)
+                    {
+                        SetConnStatus("Không liệt kê được database MongoDB: " + ex.Message, false);
+                        Log("[LỖI] " + RoleLabel + " không liệt kê được database MongoDB: " + ex.Message);
+                    }
+                    return;
+                }
+                // Engine còn lại: mới nhận diện, chưa liệt kê database.
                 if (engine != DatabaseEngine.SqlServer)
                 {
                     var name = EngineChoices.DisplayOf(profile.Engine);

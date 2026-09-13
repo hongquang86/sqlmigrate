@@ -100,6 +100,111 @@ public class CanonicalDdlTests
         Assert.Null(warning);
     }
 
+    [Theory]
+    [InlineData("int", "int(11)", CanonicalType.Int32)]
+    [InlineData("bigint", "bigint(20)", CanonicalType.Int64)]
+    [InlineData("tinyint", "tinyint(1)", CanonicalType.Bool)]
+    [InlineData("tinyint", "tinyint(4)", CanonicalType.Int16)]
+    [InlineData("varchar", "varchar(50)", CanonicalType.String)]
+    [InlineData("text", "text", CanonicalType.String)]
+    [InlineData("decimal", "decimal(10,2)", CanonicalType.Decimal)]
+    [InlineData("datetime", "datetime(6)", CanonicalType.DateTime)]
+    [InlineData("timestamp", "timestamp", CanonicalType.DateTime)]
+    [InlineData("json", "json", CanonicalType.Json)]
+    [InlineData("blob", "blob", CanonicalType.Binary)]
+    [InlineData("enum", "enum('a','b')", CanonicalType.String)]
+    [InlineData("whatever", "whatever", CanonicalType.Unknown)]
+    public void ParseMySql_MapsCommonTypes(string dataType, string columnType, CanonicalType expected)
+    {
+        Assert.Equal(expected, DbTypeMappers.ParseMySql(dataType, columnType).Type);
+    }
+
+    [Fact]
+    public void ParseMySql_VarcharLengthAndDecimalPrecision()
+    {
+        var s = DbTypeMappers.ParseMySql("varchar", "varchar(50)");
+        Assert.Equal(50, s.MaxLength);
+        var d = DbTypeMappers.ParseMySql("decimal", "decimal(10,2)");
+        Assert.Equal((byte)10, d.Precision);
+        Assert.Equal((byte)2, d.Scale);
+        var t = DbTypeMappers.ParseMySql("text", "text");
+        Assert.Equal(-1, t.MaxLength);
+    }
+
+    [Fact]
+    public void SqlServerSource_ToMySql_TypesAndDefaults()
+    {
+        // Khóa chiều SQL Server → MySQL: identity inline, guid, bool, json, text dài.
+        var table = new CanonicalTable
+        {
+            Schema = "dbo",
+            Name = "Orders",
+            Columns = new List<CanonicalColumn>
+            {
+                new() { Name = "Id", Type = CanonicalType.Int32, IsPrimaryKey = true, IsIdentity = true, IsNullable = false },
+                new() { Name = "Code", Type = CanonicalType.String, MaxLength = 50, IsUnicode = true, IsNullable = false, DefaultSql = "'X'" },
+                new() { Name = "Total", Type = CanonicalType.Decimal, Precision = 10, Scale = 2, IsNullable = true },
+                new() { Name = "Active", Type = CanonicalType.Bool, IsNullable = false, DefaultSql = "1" },
+                new() { Name = "RowId", Type = CanonicalType.Guid, IsNullable = false },
+                new() { Name = "Payload", Type = CanonicalType.Json, IsNullable = true },
+                new() { Name = "Note", Type = CanonicalType.String, MaxLength = -1, IsNullable = true }
+            },
+            PrimaryKeyColumns = new List<string> { "Id" }
+        };
+        var sql = CanonicalDdl.EmitMySql(table, out var warnings);
+
+        Assert.Contains("CREATE TABLE `Orders`", sql);
+        Assert.Contains("`Id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY", sql);
+        Assert.Contains("`Code` VARCHAR(50) NOT NULL DEFAULT 'X'", sql);
+        Assert.Contains("`Total` DECIMAL(10,2)", sql);
+        Assert.Contains("`Active` TINYINT(1) NOT NULL", sql);
+        Assert.Contains("`RowId` CHAR(36) NOT NULL", sql);
+        Assert.Contains("ENGINE=InnoDB", sql);
+        Assert.NotEmpty(warnings); // schema dbo bị bỏ + json cần version mới.
+    }
+
+    [Fact]
+    public void MySqlSource_ToSqlServer_RoundTrip()
+    {
+        // Khóa chiều MySQL → SQL Server: parse information_schema rồi emit lại.
+        var id = DbTypeMappers.ParseMySql("int", "int(11)");
+        var name = DbTypeMappers.ParseMySql("varchar", "varchar(100)");
+        var created = DbTypeMappers.ParseMySql("datetime", "datetime(6)");
+        var table = new CanonicalTable
+        {
+            Schema = "shop",
+            Name = "customers",
+            Columns = new List<CanonicalColumn>
+            {
+                new() { Name = "id", Type = id.Type, IsPrimaryKey = true, IsIdentity = true, IsNullable = false },
+                new() { Name = "name", Type = name.Type, MaxLength = name.MaxLength, IsNullable = false },
+                new() { Name = "created", Type = created.Type, Scale = created.Scale, IsNullable = false }
+            },
+            PrimaryKeyColumns = new List<string> { "id" }
+        };
+        var sql = CanonicalDdl.EmitSqlServer(table, out var warnings);
+
+        Assert.Contains("CREATE TABLE [shop].[customers]", sql);
+        Assert.Contains("INT IDENTITY(1,1)", sql);
+        Assert.Contains("NVARCHAR(100)", sql);
+        Assert.Contains("DATETIME2(6)", sql);
+        Assert.Empty(warnings);
+    }
+
+    [Theory]
+    [InlineData(CanonicalType.Money, true)]
+    [InlineData(CanonicalType.DateTimeTz, true)]
+    [InlineData(CanonicalType.Json, true)]
+    [InlineData(CanonicalType.Int32, false)]
+    [InlineData(CanonicalType.Bool, false)]
+    public void ConvertTo_MySql_Warnings(CanonicalType type, bool expectWarning)
+    {
+        var (_, _, _, _, warning) = DbTypeMappers.ConvertTo(
+            type, 0, 0, 0, DatabaseEngine.MySql);
+
+        Assert.Equal(expectWarning, warning != null);
+    }
+
     [Fact]
     public void PgSource_ToSqlServer_TypesAndDefaults()
     {

@@ -240,6 +240,83 @@ namespace SqlMigrator.Core.Services.DataMove
         }
 
         // ------------------------------------------------------------------
+        // MySQL / MariaDB (information_schema DATA_TYPE + COLUMN_TYPE)
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Tách kiểu MySQL/MariaDB từ information_schema: dataType là DATA_TYPE
+        /// (chữ thường), columnType là COLUMN_TYPE (VD: "varchar(50)", "tinyint(1)").
+        /// </summary>
+        public static TypeSpec ParseMySql(string? dataType, string? columnType)
+        {
+            var dt = (dataType ?? "").Trim().ToLowerInvariant();
+            var ct = (columnType ?? "").Trim().ToLowerInvariant();
+            var (baseName, args) = SplitType(ct.Length > 0 ? ct : dt);
+            var arg0 = args.Length > 0 ? args[0] : "";
+            return dt switch
+            {
+                "tinyint" => arg0 == "1"
+                    ? new TypeSpec(CanonicalType.Bool, 0, 0, 0)
+                    : new TypeSpec(CanonicalType.Int16, 0, 0, 0),
+                "smallint" or "year" => new TypeSpec(CanonicalType.Int16, 0, 0, 0),
+                "mediumint" or "int" or "integer" => new TypeSpec(CanonicalType.Int32, 0, 0, 0),
+                "bigint" => new TypeSpec(CanonicalType.Int64, 0, 0, 0),
+                "decimal" or "numeric" or "fixed" => new TypeSpec(CanonicalType.Decimal, 0,
+                    ParseByte(args, 0), ParseByte(args, 1)),
+                "float" => new TypeSpec(CanonicalType.Float, 0, 0, 0),
+                "double" or "real" => new TypeSpec(CanonicalType.Double, 0, 0, 0),
+                "bit" => arg0 == "1" || arg0 == ""
+                    ? new TypeSpec(CanonicalType.Bool, 0, 0, 0)
+                    : new TypeSpec(CanonicalType.Binary,
+                        int.TryParse(arg0, out var bits) ? (bits + 7) / 8 : 0, 0, 0),
+                "char" or "varchar" => new TypeSpec(CanonicalType.String,
+                    ParseLength(args, true), 0, 0),
+                "tinytext" or "text" or "mediumtext" or "longtext" => new TypeSpec(
+                    CanonicalType.String, -1, 0, 0),
+                "enum" or "set" => new TypeSpec(CanonicalType.String, -1, 0, 0),
+                "binary" or "varbinary" => new TypeSpec(CanonicalType.Binary,
+                    ParseLength(args, false), 0, 0),
+                "tinyblob" or "blob" or "mediumblob" or "longblob" => new TypeSpec(
+                    CanonicalType.Binary, 0, 0, 0),
+                "date" => new TypeSpec(CanonicalType.Date, 0, 0, 0),
+                "time" => new TypeSpec(CanonicalType.Time, 0, 0, ParseByte(args, 0)),
+                "datetime" => new TypeSpec(CanonicalType.DateTime, 0, 0, ParseByte(args, 0)),
+                "timestamp" => new TypeSpec(CanonicalType.DateTime, 0, 0, ParseByte(args, 0)),
+                "json" => new TypeSpec(CanonicalType.Json, 0, 0, 0),
+                _ => new TypeSpec(CanonicalType.Unknown, 0, 0, 0)
+            };
+        }
+
+        public static string EmitMySql(CanonicalType type, int maxLength, byte precision, byte scale)
+        {
+            return type switch
+            {
+                CanonicalType.Int16 => "SMALLINT",
+                CanonicalType.Int32 => "INT",
+                CanonicalType.Int64 => "BIGINT",
+                CanonicalType.Decimal => precision > 0 ? $"DECIMAL({precision},{scale})" : "DECIMAL",
+                CanonicalType.Money => "DECIMAL(19,4)",
+                CanonicalType.Float => "FLOAT",
+                CanonicalType.Double => "DOUBLE",
+                // MySQL giới hạn row ~65KB: chuỗi dài quá 16383 ký tự dùng MEDIUMTEXT.
+                CanonicalType.String => maxLength < 0 ? "TEXT"
+                    : maxLength == 0 ? "TEXT"
+                    : maxLength <= 16383 ? $"VARCHAR({maxLength})" : "MEDIUMTEXT",
+                CanonicalType.Bool => "TINYINT(1)",
+                CanonicalType.Date => "DATE",
+                CanonicalType.Time => scale > 0 ? $"TIME({scale})" : "TIME",
+                CanonicalType.DateTime => scale > 0 ? $"DATETIME({scale})" : "DATETIME",
+                CanonicalType.DateTimeTz => "DATETIME",
+                CanonicalType.Binary => maxLength > 0 && maxLength <= 255 ? $"VARBINARY({maxLength})"
+                    : maxLength > 65535 ? "LONGBLOB"
+                    : maxLength > 0 ? "BLOB" : "LONGBLOB",
+                CanonicalType.Guid => "CHAR(36)",
+                CanonicalType.Json => "JSON",
+                _ => "TEXT"
+            };
+        }
+
+        // ------------------------------------------------------------------
         // Chuyển đổi chéo engine (giữ nguyên nếu tương thích, cảnh báo nếu hao hụt).
         // ------------------------------------------------------------------
 
@@ -279,6 +356,35 @@ namespace SqlMigrator.Core.Services.DataMove
             if (target == Models.DatabaseEngine.SqlServer && type == CanonicalType.Json)
                 return (CanonicalType.String, -1, 0, 0,
                     "JSON về SQL Server lưu NVARCHAR(MAX) (mất kiểm tra well-formed).");
+
+            if (target == Models.DatabaseEngine.MySql)
+            {
+                return type switch
+                {
+                    CanonicalType.DateTimeTz => (CanonicalType.DateTime, 0, 0, scale,
+                        "Múi giờ bị bỏ khi sang MySQL (DATETIME không giữ tz) — giá trị giữ nguyên giờ địa phương."),
+                    CanonicalType.Guid => (CanonicalType.Guid, 0, 0, 0, null),
+                    CanonicalType.Money => (CanonicalType.Decimal, 0, 19, 4,
+                        "MONEY chuyển sang DECIMAL(19,4) — kiểm tra làm tròn tiền tệ."),
+                    CanonicalType.Json => (CanonicalType.Json, 0, 0, 0,
+                        "JSON cần MySQL 5.7+/MariaDB 10.2+ (MariaDB lưu dạng LONGTEXT)."),
+                    _ => (type, maxLength, precision, scale, null)
+                };
+            }
+
+            if (target == Models.DatabaseEngine.MongoDb)
+            {
+                // MongoDB schemaless: giữ nguyên kiểu canonical để endpoint tự ánh xạ
+                // BSON; chỉ cảnh báo các trường hợp mất mát thật sự.
+                return type switch
+                {
+                    CanonicalType.DateTimeTz => (CanonicalType.DateTime, 0, 0, scale,
+                        "Múi giờ chuyển về UTC khi sang MongoDB (BSON Date không giữ offset)."),
+                    CanonicalType.Guid => (CanonicalType.String, 36, 0, 0,
+                        "GUID lưu chuỗi 36 ký tự trên MongoDB (không dùng Binary subtype)."),
+                    _ => (type, maxLength, precision, scale, null)
+                };
+            }
 
             return (type, maxLength, precision, scale, null);
         }

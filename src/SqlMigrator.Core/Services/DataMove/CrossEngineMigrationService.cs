@@ -32,6 +32,8 @@ namespace SqlMigrator.Core.Services.DataMove
                 DatabaseEngine.PostgreSql => new PostgresEndpoint(),
                 DatabaseEngine.Sqlite => new SqliteEndpoint(),
                 DatabaseEngine.SqlServer => new SqlServerEndpoint(),
+                DatabaseEngine.MySql => new MySqlEndpoint(),
+                DatabaseEngine.MongoDb => new MongoEndpoint(),
                 _ => throw new InvalidOperationException("Engine chưa hỗ trợ di chuyển: " + engine)
             };
         }
@@ -117,6 +119,7 @@ namespace SqlMigrator.Core.Services.DataMove
             }
 
             // Đảm bảo schema tồn tại trên đích (SQL Server + PostgreSQL).
+            // MySQL/SQLite không có schema: kết nối đã trỏ đúng database/file.
             var schemas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var t in tables)
             {
@@ -198,6 +201,10 @@ namespace SqlMigrator.Core.Services.DataMove
                     ddl = CanonicalDdl.EmitPostgres(table, out emitWarnings);
                 else if (dstEngine == DatabaseEngine.Sqlite)
                     ddl = CanonicalDdl.EmitSqlite(table, out emitWarnings);
+                else if (dstEngine == DatabaseEngine.MySql)
+                    ddl = CanonicalDdl.EmitMySql(table, out emitWarnings);
+                else if (dstEngine == DatabaseEngine.MongoDb)
+                    ddl = CanonicalDdl.EmitMongo(table, out emitWarnings);
                 else
                     ddl = CanonicalDdl.EmitSqlServer(table, out emitWarnings);
                 warnings.AddRange(emitWarnings);

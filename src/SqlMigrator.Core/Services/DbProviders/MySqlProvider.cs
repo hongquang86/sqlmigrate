@@ -49,7 +49,8 @@ namespace SqlMigrator.Core.Services.DbProviders
                     Version = version.Trim(),
                     MajorVersion = ParseMajor(version),
                     Variant = isMariaDb ? "MariaDB" : "MySQL",
-                    SupportsMigration = false
+                    SupportsMigration = MigrationGuard.IsSupportedPair(
+                        DatabaseEngine.MySql, DatabaseEngine.SqlServer)
                 };
             }
             catch
