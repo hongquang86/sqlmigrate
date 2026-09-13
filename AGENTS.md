@@ -66,3 +66,26 @@ Nếu xung đột giữa yêu cầu của người dùng và file này, cần l�
 - Kiểm chứng: `dotnet build` 0 Warning/0 Error; `dotnet test` 431/431 pass; publish +
   installer + ClickToRun zip. Chưa smoke test server thật (MySQL/Mongo) — đợi user.
 - Không đụng Reconcile theo yêu cầu user.
+
+## 8. Nhật ký phiên làm việc (13/09/2026 — Bổ sung vận hành A+B+C, commit 3ba01fd)
+- Phạm vi: 3 nhóm bổ sung trong tab Quản trị + Sao lưu được user duyệt ("Duyệt tất cả").
+  Không đụng Reconcile, không mở Pha 7. Commit `3ba01fd` đã push (A+B+C + tests).
+- A (lập lịch backup): `BackupJobModels`/`BackupJobStore`/`BackupJobRunner`/
+  `TaskSchedulerService` + `BackupScheduleDialog` (nút "Lập lịch..." trong
+  BackupRestoreTabPage); headless `SqlMigrator.exe --run-backup <jobId>` qua schtasks
+  (folder "SqlMigrator", tên `<tên> [8 ký tự đầu id]`, Daily/Minute(giờ*60)/Weekly /D);
+  job nhúng copy profile (DPAPI), tên file `<DB>_yyyyMMdd_HHmmss[_Diff].bak` trả exit
+  code 0/1, log riêng theo ngày.
+- B (vận hành): `ServiceControlService` (sc.exe Start/Stop/Restart local/remote,
+  ParseState mã STATE, preset MSSQL/MySQL/PG/Mongo + tên tự gõ); `QueryRunnerService`
+  (tối đa 5000 dòng, SQLite nạp thủ công qua reader, Mongo tắt + ghi chú); nhóm 6+7.
+- C (đối chiếu + lịch sử + file backup): `InventoryCompareService` (số dòng từng bảng
+  2 bên, khác engine được nhờ canonical); `OpsLogStore` (300 entry, không secret,
+  ghi kill/dump/restore/service/truy vấn/đối chiếu/xóa file); `ServerFolderService.
+  GetChildFilesAsync` (xp_dirtree, cột 2 = file, chỉ xem — không xóa file server);
+  BuildCompareGroup/BuildFileGroup/BuildOpsLogGroup + wire events + SetBusy + `_ = 
+  RefreshOpsLogAsync()` khi khởi tạo ManageTabPage.
+- Kiểm chứng: `dotnet build` 0 Warning/0 Error; `dotnet test` 459/459 pass; publish +
+  installer `SQLMigrator_Setup_1.1.3.exe` + ClickToRun zip 73.1 MB (đã chứa A/B/C).
+- Lưu ý: working tree clean sau commit 3ba01fd; vẫn chờ smoke test server thật
+  (MySQL/MariaDB/MongoDB) do user hẹn.
