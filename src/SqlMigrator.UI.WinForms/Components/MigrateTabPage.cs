@@ -402,8 +402,10 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             _numCmdTimeout.Width = 90;
             numbers.Controls.Add(_numCmdTimeout);
 
-            numbers.Controls.Add(new Label { Text = "Chờ bulk copy (giây):", AutoSize = true, Padding = new Padding(10, 5, 0, 0) });
+            numbers.Controls.Add(new Label { Text = "Chờ bulk copy (giây, 0 = không giới hạn):", AutoSize = true, Padding = new Padding(10, 5, 0, 0) });
+            _numBulkTimeout.Minimum = 0;
             _numBulkTimeout.Maximum = 86400;
+            _numBulkTimeout.Value = 1800;
             _numBulkTimeout.Width = 90;
             numbers.Controls.Add(_numBulkTimeout);
 
@@ -425,7 +427,7 @@ var numbers = new FlowLayoutPanel { Dock = DockStyle.Bottom, WrapContents = fals
             _numMaxBufferMB.Width = 70;
             engine.Controls.Add(_numMaxBufferMB);
 
-            engine.Controls.Add(new Label { Text = "Dòng/chunk (0=tự):", AutoSize = true, Padding = new Padding(10, 5, 0, 0) });
+            engine.Controls.Add(new Label { Text = "Số dòng/chunk (0=tự chọn):", AutoSize = true, Padding = new Padding(10, 5, 0, 0) });
             _numChunkRowCount.Minimum = 0;
             _numChunkRowCount.Maximum = 1000000;
             _numChunkRowCount.Value = 0;

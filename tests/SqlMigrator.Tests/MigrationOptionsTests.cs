@@ -1,4 +1,5 @@
 using SqlMigrator.Core.Models;
+using SqlMigrator.Core.Services;
 using Xunit;
 
 namespace SqlMigrator.Tests;
@@ -81,5 +82,23 @@ public class MigrationOptionsTests
         Assert.True(options.CheckDataAfterLoad);
         Assert.True(options.EnableStreaming);
         Assert.Equal(600, options.CommandTimeoutSeconds);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1800)]
+    public void DataCopier_BulkTimeoutGiáTrịHiệuDụngKhôngBịÉpVềMặcĐịnhDriver(int bulkTimeoutSeconds)
+    {
+        var options = new MigrationOptions
+        {
+            SourceConnectionString = "Data Source=.;Initial Catalog=src;",
+            DestinationConnectionString = "Data Source=.;Initial Catalog=dest;",
+            BulkCopyTimeoutSeconds = bulkTimeoutSeconds
+        };
+
+        // Khi là 0 (không giới hạn), code phải giữ 0 chứ không để SqlBulkCopy
+        // rơi về mặc định 30 giây — nếu không bảng lớn sẽ văng timeout ngay.
+        var copier = new DataCopier(options, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        Assert.Equal(bulkTimeoutSeconds, copier.EffectiveBulkCopyTimeoutSeconds);
     }
 }

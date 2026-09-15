@@ -341,10 +341,10 @@ namespace SqlMigrator.Core.Services
                     {
                         DestinationTableName = table.QualifiedName,
                         BatchSize = chunkRows,
-                        EnableStreaming = _options.EnableStreaming
+                        EnableStreaming = _options.EnableStreaming,
+                        // 0 = không giới hạn (theo docs SqlBulkCopy).
+                        BulkCopyTimeout = _options.BulkCopyTimeoutSeconds
                     };
-                    if (_options.BulkCopyTimeoutSeconds > 0)
-                        bulk.BulkCopyTimeout = _options.BulkCopyTimeoutSeconds;
                     foreach (var column in plan.Columns)
                         bulk.ColumnMappings.Add(column, column);
 
@@ -447,10 +447,10 @@ namespace SqlMigrator.Core.Services
                 {
                     DestinationTableName = table.QualifiedName,
                     BatchSize = Math.Max(1, OptionsBatchSize()),
-                    EnableStreaming = _options.EnableStreaming
+                    EnableStreaming = _options.EnableStreaming,
+                    // 0 = không giới hạn (theo docs SqlBulkCopy).
+                    BulkCopyTimeout = _options.BulkCopyTimeoutSeconds
                 };
-                if (_options.BulkCopyTimeoutSeconds > 0)
-                    bulk.BulkCopyTimeout = _options.BulkCopyTimeoutSeconds;
                 foreach (var column in plan.Columns)
                     bulk.ColumnMappings.Add(column, column);
 
@@ -553,6 +553,13 @@ namespace SqlMigrator.Core.Services
                 options |= SqlBulkCopyOptions.FireTriggers;
             return options;
         }
+
+        /// <summary>
+        /// Thời gian chờ hiệu dụng của SqlBulkCopy (giây). 0 = không giới hạn, đúng
+        /// semantics của SqlBulkCopy.BulkCopyTimeout — khi UI để 0 thì KHÔNG được để
+        /// thuộc tính này rơi về mặc định 30 giây của driver.
+        /// </summary>
+        internal int EffectiveBulkCopyTimeoutSeconds => _options.BulkCopyTimeoutSeconds;
 
         // ----------------------------------------------------------------------------
         // Scheduler: song song nhiều bảng theo tầng phụ thuộc (DAG từ foreign key)
