@@ -89,3 +89,27 @@ Nếu xung đột giữa yêu cầu của người dùng và file này, cần l�
   installer `SQLMigrator_Setup_1.1.3.exe` + ClickToRun zip 73.1 MB (đã chứa A/B/C).
 - Lưu ý: working tree clean sau commit 3ba01fd; vẫn chờ smoke test server thật
   (MySQL/MariaDB/MongoDB) do user hẹn.
+
+## 9. Nhật ký phiên làm việc (14/09/2026 — Fix timeout bulk copy MSSQL→MSSQL, commit 51734f9)
+- Báo cáo user: migrate MSSQL→MSSQL DB ~12GB, bảng 5 triệu dòng → copy lâu, log
+  "session expire / time out". Nguyên nhân chính: ô "Chờ bulk copy (giây)" mặc định
+  **0** nhưng chưa set Minimum/Value → `BulkCopyTimeoutSeconds = 0`; `DataCopier` chỉ
+  set `bulk.BulkCopyTimeout` khi `> 0` nên `SqlBulkCopy` giữ **mặc định 30 giây** →
+  chunk bảng lớn vượt 30s → SqlException timeout (-2, transient) → `SqlRetry` retry cả
+  chunk 3 lần → chậm rồi fail. (Nhánh copy MSSQL→MSSQL đi qua `DataCopier` pipeline
+  cổ điển, không phải `SqlServerEndpoint`/cross-engine.)
+- Xử lý (user duyệt "1800 giây (30 phút)"): `DataCopier.cs` (2 chỗ keyset + fullscan)
+  luôn `BulkCopyTimeout = _options.BulkCopyTimeoutSeconds` (0 = không giới hạn) +
+  thêm `EffectiveBulkCopyTimeoutSeconds`; UI `MigrateTabPage` `Minimum=0, Value=1800`,
+  nhãn "Chờ bulk copy (giây, 0 = không giới hạn):"; đổi nhãn "Dòng/chunk" →
+  "Số dòng/chunk (0=tự chọn):"; test `DataCopier_BulkTimeoutGiáTrịHiệuDụng...`.
+- Sự cố môi trường: giữa phiên phát hiện ~30 file bị ghi đè ngoài (MainForm 2300 dòng
+  ảo, thiếu enum `DatabaseEngine`, AGENTS.md mất mục 6-8 là bản đúng nhất sau khi soi
+  bằng clone sạch: `MainForm.cs` thật = shell 54 dòng host 3 tab, UI nằm hết trong
+  `MigrateTabPage`). User duyệt khôi phục về `060f83a` (`git checkout -- .`) rồi
+  re-apply fix. **Bài học: file "MainForm.cs 2300 dòng" giai đoạn trước là dữ liệu ghi
+  đè ngoài, bản commit thật không có timeout trong MainForm.**
+- Kiểm chứng: build 0 Warning/0 Error; test **461/461 pass**; publish lại installer
+  `SQLMigrator_Setup_1.1.3.exe` (53.2 MB) + ClickToRun zip (73.1 MB).
+- Working tree clean sau commit `51734f9` (push `060f83a..51734f9`); vẫn chờ smoke
+  test server thật (MySQL/MariaDB/MongoDB) + test lại migrate 12GB với timeout mới.
